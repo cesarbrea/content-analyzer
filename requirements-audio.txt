@@ -1,0 +1,4 @@
+# Optional: sound-event tagging (Audio Spectrogram Transformer). Large download (~2 GB).
+-r requirements.txt
+torch
+transformers

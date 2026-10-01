@@ -1,0 +1,7 @@
+anthropic
+streamlit
+pillow
+pydantic
+python-dotenv
+faster-whisper
+pytest
