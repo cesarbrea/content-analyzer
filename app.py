@@ -8,10 +8,13 @@ import streamlit as st
 from certainty_help import render_certainty_help
 from charts import alignment_chart, tag_chart
 from core import config
-from core.analyze import analyze_image
+from core.analyze import analyze_asset, blocks_for
 from core.brief import draft_brief, evaluate_alignment
 from core.llm import ClaudeCallError
 from core.scoring import filter_tags
+from core.video import fmt_time
+
+IMAGE_TYPES = ["jpg", "jpeg", "png", "webp", "gif"]
 
 st.set_page_config(page_title="Content Analyzer", layout="wide")
 st.title("Content Analyzer")
@@ -39,7 +42,7 @@ def _on_draft():
 def _on_reevaluate():
     r = st.session_state["result"]
     try:
-        alignment, u = evaluate_alignment(r["image_jpeg"], r["caption"], r["scores"],
+        alignment, u = evaluate_alignment(blocks_for(r), r["caption"], r["scores"],
                                           st.session_state.get("brief", ""), r["filename"])
     except Exception as e:
         st.session_state["align_error"] = f"Evaluation failed: {e}"
@@ -59,9 +62,12 @@ with st.sidebar:
     k = st.slider("Runs per asset (K)", 1, 5, config.DEFAULT_K,
                   help="Each asset is analyzed K times independently. See the 'How certainty works' tab.")
     has_brief = bool(st.session_state.get("brief", "").strip())
-    est = (config.EST_COST_PER_RUN * k + config.EST_COST_MERGE
-           + (config.EST_COST_ALIGNMENT if has_brief else 0))
-    st.caption(f"Estimated cost: ~${est:.3f} per image" + (" (incl. brief alignment)" if has_brief else ""))
+    est_img = (config.EST_COST_PER_RUN * k + config.EST_COST_MERGE
+               + (config.EST_COST_ALIGNMENT if has_brief else 0))
+    est_vid = (config.EST_COST_VIDEO_RUN * k + config.EST_COST_VIDEO_MERGE
+               + (config.EST_COST_VIDEO_ALIGNMENT if has_brief else 0))
+    st.caption(f"Estimated cost: ~${est_img:.3f} per image, ~${est_vid:.2f} per short video"
+               + (" (incl. brief alignment)" if has_brief else ""))
 
 tab_analyze, tab_help = st.tabs(["Analyze", "How certainty works"])
 
@@ -84,7 +90,10 @@ with tab_analyze:
                              "asset is scored against it on customer, context, product, and style.")
 
     st.subheader("2. Asset")
-    uploaded = st.file_uploader("Image", type=["jpg", "jpeg", "png", "webp", "gif"])
+    uploaded = st.file_uploader("Image or video (.mp4)", type=IMAGE_TYPES + config.VIDEO_TYPES,
+                                help="Videos are sampled at scene changes (up to "
+                                     f"{config.VIDEO_MAX_FRAMES} frames) and their speech is transcribed "
+                                     "on this laptop. Sound effects and music aren't analyzed yet.")
 
     c1, c2 = st.columns([1, 2])
     with c1:
@@ -98,7 +107,7 @@ with tab_analyze:
     if st.button("Analyze", type="primary", disabled=uploaded is None):
         with st.status(f"Analyzing {uploaded.name}…", expanded=True) as status:
             try:
-                st.session_state["result"] = analyze_image(
+                st.session_state["result"] = analyze_asset(
                     uploaded.getvalue(), uploaded.name, k,
                     brief=st.session_state.get("brief", ""), on_progress=st.write)
                 st.session_state.pop("align_error", None)
@@ -117,7 +126,13 @@ with tab_analyze:
 
         left, right = st.columns([1, 2])
         with left:
-            st.image(result["image_jpeg"], caption=result["filename"])
+            if result.get("kind") == "video":
+                st.video(result["video_bytes"])
+                m = result["video_meta"]
+                st.caption(f"{result['filename']} · {m['duration']:.1f}s · {m['width']}×{m['height']} · "
+                           f"{len(result['frames'])} frames sampled")
+            else:
+                st.image(result["image_jpeg"], caption=result["filename"])
             u = result["usage"]
             st.caption(f"{result['model']} · K={result['k']} · {u['input_tokens']:,} in / "
                        f"{u['output_tokens']:,} out tokens · ${result['cost_usd']:.4f}")
@@ -130,6 +145,23 @@ with tab_analyze:
             else:
                 chart, h = tag_chart(shown)
                 st.altair_chart(chart, width="stretch", height=h)
+
+        # ---- Video: what Claude was given ----
+        if result.get("kind") == "video":
+            with st.expander(f"Frames sent to Claude ({len(result['frames'])})"):
+                cols = st.columns(5)
+                for i, (t, jpeg) in enumerate(result["frames"]):
+                    cols[i % 5].image(jpeg, caption=fmt_time(t))
+            with st.expander("Speech transcript"):
+                tr = result["transcript"]
+                if not result["video_meta"].get("has_audio"):
+                    st.caption("This video has no audio track.")
+                elif not tr or not tr["segments"]:
+                    st.caption("No speech detected. Music and sound effects aren't analyzed yet.")
+                else:
+                    st.caption(f"Language: {tr['language']} (transcribed on this laptop)")
+                    for s in tr["segments"]:
+                        st.markdown(f"`{fmt_time(s['start'])}–{fmt_time(s['end'])}` {s['text']}")
 
         # ---- Brief alignment ----
         st.divider()
@@ -177,7 +209,9 @@ with tab_analyze:
         with st.expander("Merged variants"):
             st.write(result["merge_map"] or "No variants were merged.")
         with st.expander("Raw data (debug)"):
-            debug = {k_: v for k_, v in result.items() if k_ not in ("image_jpeg", "scores", "observations")}
+            skip = ("image_jpeg", "video_bytes", "frames", "scores", "observations")
+            debug = {k_: v for k_, v in result.items() if k_ not in skip}
+            debug["frame_times"] = [t for t, _ in result.get("frames", [])]
             debug["observations"] = [asdict(o) for o in result["observations"]]
             st.code(json.dumps(debug, indent=2, ensure_ascii=False), language="json")
 

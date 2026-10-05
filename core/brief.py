@@ -1,6 +1,4 @@
 """Creative brief: drafting from a product description, and asset alignment scoring."""
-import base64
-
 from pydantic import BaseModel
 
 from core.config import EFFORT_ALIGNMENT, EFFORT_BRIEF_DRAFT
@@ -76,19 +74,20 @@ Then give 3-5 specific, actionable suggestions for changing the asset to conform
 brief (e.g. what to show, from how close, which feature or benefit to make visible). Suggestions
 should be things a creative team could act on, not generic advice.
 
-You are given the image plus machine-extracted tags with certainty scores; use the tags as hints,
-but trust the image itself where they disagree."""
+You are given the asset (an image, or a video as timestamped frames plus a speech transcript) and
+machine-extracted tags with certainty scores. Use the tags as hints, but trust the asset itself where
+they disagree. For a video, judge the video as a whole, including what is said, and point suggestions
+at specific moments where useful (e.g. "at 0:08, show the fabric up close")."""
 
 
-def evaluate_alignment(jpeg_bytes: bytes, caption: str, scores: list[TagScore], brief: str,
+def evaluate_alignment(blocks: list[dict], caption: str, scores: list[TagScore], brief: str,
                        filename: str = "") -> tuple[dict, dict]:
-    """Returns ({dimensions: {name: {score, rationale}}, overall, suggestions}, usage)."""
+    """blocks: the asset's content blocks from tagger.media_blocks (image, or video frames + transcript).
+    Returns ({dimensions: {name: {score, rationale}}, overall, suggestions, brief}, usage)."""
     tag_lines = "\n".join(f"- {s.tag} ({s.certainty:.0%})" for s in scores[:30])
-    b64 = base64.standard_b64encode(jpeg_bytes).decode("utf-8")
     messages = [{
         "role": "user",
-        "content": [
-            {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}},
+        "content": blocks + [
             {"type": "text", "text": (
                 f"<brief>\n{brief.strip()}\n</brief>\n\n"
                 f"<caption>{caption}</caption>\n\n"

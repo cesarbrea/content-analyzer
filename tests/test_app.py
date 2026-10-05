@@ -29,13 +29,25 @@ def _fake_result(with_alignment=False):
             "suggestions": ["Show the fabric up close."],
             "brief": BRIEF,
         }
+    jpeg = prepare_image(buf.getvalue())
     return {
-        "filename": "x.png", "model": "claude-sonnet-5", "k": 2, "caption": "A sea.",
+        "filename": "x.png", "kind": "image", "model": "claude-sonnet-5", "k": 2, "caption": "A sea.",
         "captions": ["A sea.", "The sea."], "scores": score_tags(obs, 2), "observations": obs,
         "merge_map": {}, "alignment": alignment,
         "usage": {"input_tokens": 10, "output_tokens": 5}, "cost_usd": 0.0001,
-        "image_jpeg": prepare_image(buf.getvalue()),
+        "frames": [(None, jpeg)], "transcript": None, "video_meta": {},
+        "image_jpeg": jpeg, "video_bytes": None,
     }
+
+
+def _fake_video_result(segments):
+    r = _fake_result()
+    jpeg = r["image_jpeg"]
+    r.update(filename="ad.mp4", kind="video", frames=[(0.5, jpeg), (4.2, jpeg)],
+             transcript={"language": "en" if segments else None, "segments": segments},
+             video_meta={"duration": 8.0, "width": 40, "height": 30, "has_audio": True},
+             video_bytes=b"not really a video")
+    return r
 
 
 def _app():
@@ -81,6 +93,30 @@ def test_changed_brief_offers_reevaluation():
     assert not at.exception
     assert at.warning
     assert any(b.label.startswith("Re-evaluate") for b in at.button)
+
+
+def test_uploader_accepts_mp4():
+    at = _app().run()
+    up = at.get("file_uploader")[0]
+    assert "mp4" in up.proto.type or ".mp4" in up.proto.type
+
+
+def test_video_result_renders_frames_and_transcript():
+    at = _app()
+    at.session_state["result"] = _fake_video_result([{"start": 1.0, "end": 2.5, "text": "Heads will turn."}])
+    at.run()
+    assert not at.exception
+    labels = [e.label for e in at.expander]
+    assert "Frames sent to Claude (2)" in labels and "Speech transcript" in labels
+    assert any("Heads will turn." in m.value for m in at.markdown)
+
+
+def test_video_without_speech_says_so():
+    at = _app()
+    at.session_state["result"] = _fake_video_result([])
+    at.run()
+    assert not at.exception
+    assert any("No speech detected" in c.value for c in at.caption)
 
 
 def test_help_tab_explains_self_confidence():

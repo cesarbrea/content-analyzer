@@ -1,8 +1,8 @@
 # Content Analyzer — Build Plan
 
-_Plan written 2026-09-29 from the planning conversation and the Loom walkthrough of the earlier variant. Last updated 2026-10-01._
+_Plan written 2026-09-29 from the planning conversation and the Loom walkthrough of the earlier variant. Last updated 2026-10-05._
 
-**Progress:** Phases 0–3 are complete. Single-image tagging with certainty scores, the "How certainty works" tab, brief alignment, and brief drafting all work. **Next: Phase 4** (SQLite persistence, History, CSV/JSON export). See §12 for phase status and §16 for the change log.
+**Progress:** Phases 0–3 are complete, and **Phase 6 (video) is done for `.mp4`**; it was moved ahead of Phases 4–5 so a screen-recorded ad could be analyzed. Working now: image and `.mp4` tagging with certainty scores, local speech transcription, the "How certainty works" tab, brief alignment, and brief drafting. **Next: Phase 4** (SQLite persistence, History, CSV/JSON export). **Under discussion:** analyzing YouTube URLs (§17). See §12 for phase status and §16 for the change log.
 
 ---
 
@@ -80,8 +80,9 @@ Chosen to make debugging easy:
 | Charts | Altair (ships with Streamlit) | Horizontal and diverging bars, tooltips; builders in `charts.py` |
 | LLM | Anthropic Python SDK (`anthropic` 1.9) | Structured outputs via `client.messages.parse()` + Pydantic; 90 s request timeout, 2 retries |
 | Images | Pillow | Resize to ≤1568 px on the long edge |
-| Video frames and audio extraction | **ffmpeg** (`winget install Gyan.FFmpeg`) | Via `subprocess`; installed (9.0.2), not yet used |
-| Speech-to-text | `faster-whisper` (CTranslate2; **no PyTorch needed**) | `base`/`small` model, CPU |
+| Video frames and audio extraction | **ffmpeg** (`winget install Gyan.FFmpeg`) | Via `subprocess`; installed (9.0.2). `core/video.py` finds it even when the process started before ffmpeg was on PATH (checks the user PATH in the registry and the WinGet packages folder) |
+| Speech-to-text | `faster-whisper` (CTranslate2; **no PyTorch needed**) | `base` model, CPU, int8, voice-activity filter on. Model downloaded once (~150 MB) from Hugging Face into the user cache. Audio is passed as a NumPy array read from ffmpeg's 16 kHz WAV, which skips faster-whisper's PyAV decoder (it fails with newer PyAV: `unexpected keyword argument 'metadata_errors'`) |
+| Corporate network TLS | `truststore` | Makes Python trust the Windows certificate store, needed because the AlixPartners network re-signs HTTPS traffic (Hugging Face download failed with `self-signed certificate in certificate chain`). Certificate checking stays on |
 | Sound events (**optional**) | Audio Spectrogram Transformer (`MIT/ast-finetuned-audioset-10-10-0.4593`) via `transformers` + `torch` | Separate `requirements-audio.txt` (~2 GB). App detects whether it's installed and hides or disables the option if not |
 | Storage | SQLite (`sqlite3` stdlib) + `data/` | |
 | Config | `.env` (`ANTHROPIC_API_KEY`; optional `CA_MODEL`) + `core/config.py` (defaults, weights, prices, cost estimates) | `.env` is gitignored; `.env.example` shows the format |
@@ -112,10 +113,14 @@ Adaptive thinking on (`thinking: {type: "adaptive"}`), effort via `output_config
 | Brief alignment | ≈ $0.012 per image |
 | **Image at K = 3, with brief** | **≈ $0.066** |
 | Drafting a brief | ≈ $0.007 |
+| **Short video, per tagging run** (~9 frames at 1024 px; 8.4K input / 1.2K output tokens) | ≈ $0.029 |
+| Video merge call | ≈ $0.011 |
+| Video brief alignment | ≈ $0.023 |
+| **Short video at K = 3, with brief** (measured 2026-10-05) | **≈ $0.12** (no brief ≈ $0.10) |
 
-Output tokens, which include Claude's reasoning, are the main cost driver. These figures are set in `core/config.py` (`EST_COST_*`) and used for the sidebar estimate and the help tab.
+Output tokens, which include Claude's reasoning, are the main cost driver for images; for video, the frames make input the larger share. These figures are set in `core/config.py` (`EST_COST_*`) and used for the sidebar estimate and the help tab.
 
-**Original estimate** (made before measuring, for reference): ≈ $0.03–0.04 per image and ≈ $0.15 per video (~10 frames plus transcript, ≈ 17K input tokens per call), both at K = 3 plus alignment. The video figure is still unmeasured.
+**Original estimate** (made before measuring, for reference): ≈ $0.03–0.04 per image and ≈ $0.15 per video (~10 frames at full size plus transcript, ≈ 17K input tokens per call), both at K = 3 plus alignment. The video estimate came down because frames are sent at 1024 px instead of 1568 px.
 
 ---
 
@@ -134,12 +139,15 @@ Upload ─► Ingest ─► Prep ─► Caption+Tags (K runs) ─► Merge ─�
 ### 6.2 Image prep
 Fix EXIF orientation, convert to RGB, resize to ≤1568 px on the long edge.
 
-### 6.3 Video prep
-1. **Frames:** ffmpeg scene-change detection, with a fallback to evenly spaced frames. Cap at ~10 (configurable). Keep timestamps.
-2. **Audio:** ffmpeg → 16 kHz mono WAV, then:
-   - **Speech (always on):** faster-whisper → timestamped transcript and language.
-   - **Sound events (optional):** AST on ~10 s windows. Keep labels ≥ 0.15 probability.
-3. Frames, transcript, and sound events (if enabled) go into **one** Claude request per run, so the video is tagged as a whole.
+### 6.3 Video prep ✅ (`.mp4`; `core/video.py`, `core/audio.py`)
+1. **Probe** with ffprobe: duration, size, whether there is an audio track.
+2. **Frames:** ffmpeg scene-change detection (scene score > 0.3). The frame count is about one frame per 2 s, between 4 and 10 frames. The chosen frames are the opening shot, a frame 0.3 s after each cut, and then the evenly spaced points farthest from those already chosen; near-duplicates are dropped. With many cuts, an even spread of them is kept. Frames are resized to **1024 px** (vs 1568 for images) to keep cost down. Example: a 19 s ad with 4 cuts gave 9 frames.
+3. **Audio:** ffmpeg → 16 kHz mono WAV, then:
+   - **Speech (always on, local):** faster-whisper → timestamped segments + language. Audio never leaves the laptop; only the transcript text goes to Claude.
+   - **Sound events (optional, Phase 7):** AST on ~10 s windows. Keep labels ≥ 0.15 probability.
+4. Frames (each labelled "Frame at m:ss.s"), the transcript (or "No speech detected" / "no audio track"), and later sound events go into **one** Claude request per run, so the video is tagged as a whole. Tags use `source: speech` for things that come from the transcript; evidence cites frame times or quotes.
+5. Claude is told to **ignore video player and screen-recording elements** (play/pause buttons, progress bars, browser chrome), because screen recordings of YouTube include them.
+6. Only `.mp4` is accepted for now (`VIDEO_TYPES` in config). `.mov`, `.webm`, and others need only to be added to that list and tested.
 
 ### 6.4 Caption + tagging (Claude, K runs)
 Structured output (Pydantic):
@@ -155,6 +163,8 @@ Structured output (Pydantic):
   - `evidence`: a short pointer (region, frame timestamp, or transcript quote)
 
 The prompt covers subjects, people and *apparent* demographics, setting, activity, objects, product and apparel features, mood, and visual style. It asks for up to 25 tags and tells Claude to be calibrated rather than default to high numbers. The caption from run 1 is displayed; all captions are kept in the raw data.
+
+For video the prompt adds: tag the video as a whole (rate brief or peripheral things lower), and tag what is said (topics, claims, benefits, calls to action, tone of voice), noting that transcripts are machine-generated. Images and videos share one code path: `tagger.media_blocks()` turns an asset into content blocks, which are used for both tagging and alignment.
 
 The K runs are sent in parallel (thread pool). Progress updates are reported from the main thread so Streamlit can display them. Claude sometimes tags notable absences (e.g. "no people"); these are kept, since they're relevant to brief review.
 
@@ -210,17 +220,18 @@ _Later: calibrate against a hand-labelled set and add a reliability chart._
      - **Draft a brief from a product description** (expander): description → "Draft brief" → fills the brief box
      - **Creative brief** text area; when filled, alignment runs on every file
    - **2. Asset**
-     - Uploader (images now; video / zip in Phases 5–6)
+     - Uploader: images (jpg, jpeg, png, webp, gif) and **`.mp4` video**; zip in Phase 5
      - Output limit: radio **Top N** (1–25) or **Certainty threshold** (0–100%)
      - "Analyze" → step-by-step progress
    - **Results:**
-     - image · cost/tokens · **caption** · **tag certainty chart** (single color for now; colored by category in Phase 5; tooltips show agreement, self-confidence, runs seen, evidence)
+     - image, or **video player** with duration / size / frame count · cost/tokens · **caption** · **tag certainty chart** (single color for now; colored by category in Phase 5; tooltips show agreement, self-confidence, runs seen, evidence)
+     - _(video)_ **Frames sent to Claude** grid with timestamps · **Speech transcript** with timestamps (or "No speech detected. Music and sound effects aren't analyzed yet.")
      - **Creative brief alignment:** overall metric, diverging chart, rationales, suggestions, brief used, re-evaluate button
      - expanders: Tag details · Merged variants · Raw data (debug)
 2. **How certainty works** ✅ (§7)
 3. _(Phase 4)_ **History:** past runs (date, files, model, settings, tokens/cost). Reopen or delete.
 
-**Sidebar:** model ID (display), K slider, per-image cost estimate (includes alignment when a brief is present). Score weights and the frame cap are set in `core/config.py`, not the UI. A sound-event toggle comes in Phase 7.
+**Sidebar:** model ID (display), K slider, cost estimate per image and per short video (includes alignment when a brief is present). Score weights and the frame cap are set in `core/config.py`, not the UI. A sound-event toggle comes in Phase 7.
 
 **Charts:** 30 px per bar, 13 px labels, and Vega-Lite label hiding (`labelOverlap`) turned off, so every bar's label is always shown. Axes run slightly past the data range (certainty to 108%; alignment to ±1.25) so end-of-bar values aren't clipped.
 
@@ -261,14 +272,14 @@ content_analyzer/
     config.py               ✅ env + defaults, weights, prices, cost estimates
     llm.py                  ✅ Claude client (timeout/retries), parse_call / text_call, JSONL logging
     images.py               ✅ resize/normalize
-    tagger.py               ✅ caption + tag call, CONFIDENCE_BANDS rubric
+    tagger.py               ✅ media_blocks (image or frames+transcript), tag_asset, CONFIDENCE_BANDS rubric
     merge.py                ✅ normalization + synonym merge (categorization in Phase 5)
     scoring.py              ✅ certainty + filtering (pure functions)
     brief.py                ✅ brief drafting + alignment + suggestions, DIMENSIONS
-    analyze.py              ✅ orchestration: K runs -> merge -> score -> alignment
+    analyze.py              ✅ analyze_asset: prep (image/video) -> K runs -> merge -> score -> alignment
+    video.py                ✅ find ffmpeg, probe, scene changes, pick_timestamps, frames, audio
+    audio.py                ✅ faster-whisper transcription (optional AST sound events in Phase 7)
     ingest.py                  upload/zip handling (Phase 5)
-    video.py                   ffmpeg frames + audio extraction (Phase 6)
-    audio.py                   faster-whisper; optional AST sound events (Phases 6-7)
     storage.py                 SQLite (Phase 4)
     export.py                  CSV/JSON (Phase 4)
   scripts/
@@ -276,7 +287,8 @@ content_analyzer/
     try_image.py            ✅ run the pipeline on an image from the terminal; --make-sample
   tests/
     test_scoring.py         ✅ scoring, filtering, normalize
-    test_app.py             ✅ UI renders (AppTest), re-filtering, alignment, help tab; no API calls
+    test_app.py             ✅ UI renders (AppTest), re-filtering, alignment, help tab, video results; no API calls
+    test_video.py           ✅ frame picking, media blocks, ffmpeg on a generated 4 s clip; no API calls
     assets/sample_sailboat.png ✅ synthetic test image
   data/                     gitignored: logs (db, assets from Phase 4)
   .env / .env.example       ✅ API key (gitignored) / format example
@@ -285,7 +297,7 @@ content_analyzer/
   plan.md
 ```
 
-**Run:** `.\.venv\Scripts\streamlit.exe run app.py` · **Test:** `.\.venv\Scripts\python.exe -m pytest tests` · **CLI check:** `.\.venv\Scripts\python.exe scripts\try_image.py <image> [K]`
+**Run:** `.\.venv\Scripts\streamlit.exe run app.py` (after changing anything under `core/`, **restart** the app; a browser refresh keeps old modules in memory) · **Test:** `.\.venv\Scripts\python.exe -m pytest tests` · **CLI check:** `.\.venv\Scripts\python.exe scripts\try_image.py <image> [K]`
 
 ---
 
@@ -299,7 +311,7 @@ content_analyzer/
 | 3 | Brief alignment (4 dimensions, −1…+1, suggestions, diverging chart) + **brief drafting helper** | Sailing-shirt description → drafted brief → image gives sensible scores and suggestions | ✅ 2026-09-30. Tested on a synthetic image and on a user photo of dinghy racers; still to do: test with the demo's Sunfish image |
 | 4 | SQLite persistence, History tab, CSV/JSON export, saved brief drafts | Past run reopens identically; exports open in Excel | **Next** |
 | 5 | Zip ingest (images) + emergent categories | Mixed zip with junk files handled cleanly; chart colored by category | |
-| 6 | Video visual tagging (ffmpeg frames) + speech via faster-whisper | Tags cite frame timestamps or quotes | |
+| 6 | Video visual tagging (ffmpeg frames) + speech via faster-whisper | Tags cite frame timestamps or quotes | ✅ 2026-10-05 for `.mp4` (done before Phases 4–5 at the user's request). Tested with screen-recorded ads. Speech tested only on a no-speech ad so far |
 | 7 | **Optional** sound-event module (AST) | App works with and without `requirements-audio.txt` installed | |
 | 8 | Polish: error handling (API errors, bad files), logging | One failed asset doesn't break the run | Partly done: request timeout + retries, refusal / incomplete-output errors shown in the UI |
 
@@ -313,6 +325,10 @@ content_analyzer/
 - **Data handling:** assets, frames, and transcripts are sent to the Anthropic API. The user confirmed there are no restrictions.
 - **Hung requests:** one request once stalled for ~7 minutes under the SDK's default 10-minute timeout. Now 90 s with 2 retries, so a stuck call fails visibly instead of looking like a freeze.
 - **Laptop memory:** a background-started app was stopped once when memory ran low. If the app disappears, restart it with the run command in §11.
+- **Corporate network (TLS inspection):** downloads from Python (e.g. Hugging Face models) fail certificate checks unless `truststore` is used. Any new download in future phases (e.g. the AST sound model) should go through the same path.
+- **Library drift:** faster-whisper's PyAV-based decoder broke with the installed PyAV; worked around by passing raw audio. Pinning versions in `requirements.txt` would prevent surprises like this.
+- **Streamlit module caching:** after code changes under `core/`, restart the app (a refresh caused an `ImportError` once).
+- **Long videos:** the 10-frame cap is sized for 15–60 s ads. Longer videos are sampled more sparsely, and transcription takes longer on CPU.
 - **Windows tooling note:** PowerShell 5.1's `Get-Content`/`Set-Content` reads and writes non-UTF-8 by default and garbled characters in `app.py` once. Edit source files with an editor, not PowerShell text replacement.
 
 ## 14. Later ideas (not v1)
@@ -343,10 +359,29 @@ content_analyzer/
 | Header subtitle | Exact wording supplied by the user (2026-09-30) |
 | Absence in brief alignment | Scores **0**, not −1 (2026-09-30) |
 | Chart labels | Every bar must show its label (2026-10-01) |
+| Video support timing | Build `.mp4` support now, before Phase 4 (2026-10-05) |
+| YouTube videos | No direct URL support yet; options under discussion (§17). Meanwhile, screen-record with Snipping Tool and upload the `.mp4` (works) |
 
 ## 16. Change log
 | Date | Change |
 |---|---|
 | 2026-09-29 | Plan written. Phase 0 setup (Python 3.12.10, ffmpeg 9.0.2, venv, API key verified). Phase 1 built and tested: tagging, merging, certainty, chart, re-filtering. |
 | 2026-09-30 | Phases 2–3: tabs; "How certainty works" tab explaining self-confidence; subtitle; brief drafting (≤ 250 words); brief alignment with re-evaluate; absence scores 0; 90 s API timeout; fixed garbled characters in `app.py`. |
-| 2026-10-01 | Chart fix: every bar label shown (no label hiding, 30 px rows, padded axes); charts moved to `charts.py`. Plan updated to match the build. First git commit. |
+| 2026-10-01 | Chart fix: every bar label shown (no label hiding, 30 px rows, padded axes); charts moved to `charts.py`. Plan updated to match the build. First git commit; pushed to private repo github.com/cesarbrea/content-analyzer. |
+| 2026-10-05 | YouTube options discussed (§17). Phase 6 for `.mp4`: scene-based frame sampling, local transcription, video-aware prompts, frames/transcript display, ignore player chrome. Fixes: `truststore` for the corporate network, raw-audio input to faster-whisper, ffmpeg lookup. Measured video cost ≈ $0.12 with a brief. 18 tests. |
+
+## 17. YouTube URLs (under discussion, not planned yet)
+
+Claude can't watch a YouTube link (web fetch sees only the page HTML), so the app has to obtain frames and audio itself and then use the Phase 6 video pipeline. Options discussed on 2026-10-05:
+
+| | Approach | Gives | Considerations |
+|---|---|---|---|
+| A | Download with `yt-dlp`, then the normal video pipeline | Full analysis | YouTube's Terms of Service forbid downloading except through YouTube's own features; a policy decision for the user (and possibly AlixPartners for client work). The tool needs frequent updates |
+| B | Official YouTube Data API: metadata + high-res thumbnail | Thumbnail + title/description/tags; no frames, no audio | Fully within the rules; limited |
+| C | B + transcript via an unofficial library | Adds spoken content | Grey area (scraping); captions not always available |
+| D | Screen recording (Snipping Tool) → upload `.mp4` | Full analysis | **Works today**, used on 2026-10-05. Manual; player controls appear in frames, which the prompt now ignores |
+| E | Get the master file from the asset owner | Full analysis, best quality | Best for client creative |
+| F | Gemini API for the video step (accepts public YouTube URLs) | Full analysis | Adds a second AI provider; conflicts with the one-model decision and muddies the certainty method |
+
+**Suggested direction:** a "YouTube URL" input with a Quick mode (B + C) and an opt-in Full mode (A) with a Terms of Service note; D/E for client work.
+**Open questions:** whose videos (client, competitor, own)? typical length? is the download option (A) acceptable? is a second AI provider (F) worth considering?

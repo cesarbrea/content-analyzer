@@ -4,4 +4,5 @@ pillow
 pydantic
 python-dotenv
 faster-whisper
+truststore
 pytest
