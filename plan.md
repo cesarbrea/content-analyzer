@@ -2,7 +2,7 @@
 
 _Plan written 2026-09-29 from the planning conversation and the Loom walkthrough of the earlier variant. Last updated 2026-10-05._
 
-**Progress:** Phases 0–3 are complete, and **Phase 6 (video) is done for `.mp4`**; it was moved ahead of Phases 4–5 so a screen-recorded ad could be analyzed. Working now: image and `.mp4` tagging with certainty scores, local speech transcription, the "How certainty works" tab, brief alignment, and brief drafting. **Next: Phase 4** (SQLite persistence, History, CSV/JSON export). **Under discussion:** analyzing YouTube URLs (§17). See §12 for phase status and §16 for the change log.
+**Progress:** Phases 0–3 are complete, and **Phase 6 (video) is done for `.mp4`**; it was moved ahead of Phases 4–5 so a screen-recorded ad could be analyzed. Working now: image and `.mp4` tagging with certainty scores, local speech transcription, the "How certainty works" tab, brief alignment, and brief drafting. **Next: Phase 4** (SQLite persistence, History, CSV/JSON export), then **Phase 4b** (library vocabulary and model-ready feature export for propensity and media mix models, §18). **Under discussion:** analyzing YouTube URLs (§17). See §12 for phase status and §16 for the change log.
 
 ---
 
@@ -15,7 +15,12 @@ A local web app that takes images, videos, or zip archives of them, looks at the
 
 It also helps **draft a creative brief** from a product description.
 
-The goal is **creative optimization in advertising**: understand the properties of campaign assets and how well they fit the strategy. The AI acts as a **creative aid, not a replacement** for the people doing the creative work.
+The app serves **two uses** (the second added 2026-10-05, from the project README):
+
+1. **Creative optimization (a "muse" for creative teams):** understand the properties of campaign assets, how well they fit the brief, and how to improve them. The AI acts as a **creative aid, not a replacement** for the people doing the creative work.
+2. **Creative features for performance modelling:** turn assets into **enriched, structured tags** (features) that can be joined to creative performance data. The aim is to understand which creative attributes drive response, and to add creative features to **customer-response propensity models** and **media mix models**, which today usually treat creative as a black box.
+
+Use 2 doesn't change the analysis itself. It shapes how results are **stored and exported** (§9–10, §18): stable asset IDs to join on, a tag vocabulary that is consistent *across* assets, numeric feature values, and records of which model and prompt produced each value.
 
 ---
 
@@ -241,21 +246,29 @@ Changing Top N or the threshold **re-filters the stored result** without calling
 
 ## 9. Data model (SQLite) _(Phase 4, not yet built; results currently live in the Streamlit session only)_
 
-- `runs` (id, created_at, model, k_runs, limit_mode, limit_value, brief_text, sound_events_enabled, input_tokens, output_tokens, est_cost_usd)
+- `runs` (id, created_at, model, **prompt_version**, k_runs, limit_mode, limit_value, brief_text, sound_events_enabled, input_tokens, output_tokens, est_cost_usd)
 - `briefs` (id, run_id nullable, product_description, drafted_brief, created_at)
-- `assets` (id, run_id, filename, kind, path, thumb_path, duration_s, caption, transcript, sound_events_json)
+- `assets` (id, run_id, **asset_key**, **content_hash**, filename, kind, path, thumb_path, duration_s, caption, transcript, sound_events_json)
 - `tag_observations` (asset_id, run_index, raw_tag, canonical_tag, source, self_confidence, evidence)
-- `tags` (asset_id, canonical_tag, category, source, agreement, mean_self_confidence, certainty)
+- `tags` (asset_id, canonical_tag, **feature** (library vocabulary term, §18), category, source, agreement, mean_self_confidence, certainty)
 - `brief_scores` (asset_id, dimension, score, rationale)
 - `brief_summary` (asset_id, overall_score, suggestions_json)
+- **`vocabulary`** (feature, category, variants_json, first_seen, asset_count): the library-level vocabulary (§18)
 
 The unfiltered tag list is stored in full; filtering happens at display and export time.
+
+Added for performance modelling (use 2):
+- **`asset_key`:** the ID used to join with performance data (ad ID, creative ID, or filename). It defaults to the filename and can be edited, because filenames rarely match the IDs in ad platforms.
+- **`content_hash`:** a fingerprint of the file, so re-uploads of the same creative are recognized even under a different name.
+- **`prompt_version`:** recorded with every run, together with the model. Features from different prompt or model versions shouldn't be mixed silently in a model.
 
 ## 10. Export _(Phase 4, not yet built)_
 - **CSV (tags):** file, caption, tag, category, certainty, agreement, self-confidence, source, evidence.
 - **CSV (alignment):** file, dimension, score, rationale, plus overall score and suggestions.
 - **JSON:** full run: settings, brief, captions, transcripts, raw observations, merge mapping, categories, alignment.
 - Export either the current filtered view or everything.
+- **Feature matrix CSV (for modelling):** one row per asset (`asset_key`), one column per vocabulary feature, plus the four alignment dimensions, overall alignment, and asset metadata (kind, duration, model, prompt_version, run date). A feature is **0 when absent**; when present, the value is its **certainty** (0–1), with an option to export **binary** values (1 at or above a chosen certainty threshold) instead. **Every** feature is exported, not just the current Top N, so the columns are the same for every asset. Accompanied by a data dictionary (feature → category, variants, number of assets).
+- **Long-format CSV (for modelling):** `asset_key, feature, category, source, certainty, agreement, self_confidence`, for tools that prefer tidy data.
 
 ---
 
@@ -309,7 +322,8 @@ content_analyzer/
 | 1 | Single image → K runs → merge → certainty → caption + tag chart; Top-N/threshold toggle; token/cost logging | Chart renders; re-filtering makes no API calls; measured cost | ✅ 2026-09-29 (cost ≈ $0.054, above the $0.03–0.04 estimate, accepted) |
 | 2 | "How certainty works" tab | Reads live config values; explains self-confidence | ✅ 2026-09-30 |
 | 3 | Brief alignment (4 dimensions, −1…+1, suggestions, diverging chart) + **brief drafting helper** | Sailing-shirt description → drafted brief → image gives sensible scores and suggestions | ✅ 2026-09-30. Tested on a synthetic image and on a user photo of dinghy racers; still to do: test with the demo's Sunfish image |
-| 4 | SQLite persistence, History tab, CSV/JSON export, saved brief drafts | Past run reopens identically; exports open in Excel | **Next** |
+| 4 | SQLite persistence, History tab, CSV/JSON export, saved brief drafts; **`asset_key` / `content_hash` / `prompt_version`** stored from the start | Past run reopens identically; exports open in Excel | **Next** |
+| 4b | **Library vocabulary + model-ready export** (§18): cross-asset feature merge, editable vocabulary, feature-matrix and long-format CSVs with a data dictionary | Two assets with "sailboat" vs "sailing boat" land in the same column; the matrix loads cleanly into Python/R/Excel | After Phase 4 (needs saved results across assets) |
 | 5 | Zip ingest (images) + emergent categories | Mixed zip with junk files handled cleanly; chart colored by category | |
 | 6 | Video visual tagging (ffmpeg frames) + speech via faster-whisper | Tags cite frame timestamps or quotes | ✅ 2026-10-05 for `.mp4` (done before Phases 4–5 at the user's request). Tested with screen-recorded ads. Speech tested only on a no-speech ad so far |
 | 7 | **Optional** sound-event module (AST) | App works with and without `requirements-audio.txt` installed | |
@@ -319,6 +333,8 @@ content_analyzer/
 
 ## 13. Risks and notes
 - **Emergent tags vary run to run.** Merge quality drives certainty quality, so keep the mapping visible and unit-tested.
+- **Emergent tags also vary asset to asset**, which matters for modelling: without a shared vocabulary, "sailboat" in one ad and "sailing boat" in another become different features. §18 addresses this.
+- **Features for modelling are model outputs, not ground truth.** Certainty isn't calibrated, and a model or prompt change can shift values. Record `model` + `prompt_version`, and re-run the whole library under one version before fitting a model.
 - **Cost scales with K × frames × files.** Show an estimate before each run, especially for large zips, since alignment runs on every file.
 - **ffmpeg must be on PATH.** Check at startup and show a clear message if it's missing.
 - **Apparent demographics** ("middle-aged", "elderly") are needed for customer alignment but are guessed from appearance. Label them as apparent.
@@ -359,6 +375,7 @@ content_analyzer/
 | Header subtitle | Exact wording supplied by the user (2026-09-30) |
 | Absence in brief alignment | Scores **0**, not −1 (2026-09-30) |
 | Chart labels | Every bar must show its label (2026-10-01) |
+| Second use: features for performance modelling | Added to the plan (2026-10-05, from the README): stable asset keys, library vocabulary, model-ready exports (§18) |
 | Video support timing | Build `.mp4` support now, before Phase 4 (2026-10-05) |
 | YouTube videos | No direct URL support yet; options under discussion (§17). Meanwhile, screen-record with Snipping Tool and upload the `.mp4` (works) |
 
@@ -369,6 +386,7 @@ content_analyzer/
 | 2026-09-30 | Phases 2–3: tabs; "How certainty works" tab explaining self-confidence; subtitle; brief drafting (≤ 250 words); brief alignment with re-evaluate; absence scores 0; 90 s API timeout; fixed garbled characters in `app.py`. |
 | 2026-10-01 | Chart fix: every bar label shown (no label hiding, 30 px rows, padded axes); charts moved to `charts.py`. Plan updated to match the build. First git commit; pushed to private repo github.com/cesarbrea/content-analyzer. |
 | 2026-10-05 | YouTube options discussed (§17). Phase 6 for `.mp4`: scene-based frame sampling, local transcription, video-aware prompts, frames/transcript display, ignore player chrome. Fixes: `truststore` for the corporate network, raw-audio input to faster-whisper, ffmpeg lookup. Measured video cost ≈ $0.12 with a brief. 18 tests. |
+| 2026-10-05 | Added the second use from the README, creative features for performance modelling: purpose (§1), data model fields (`asset_key`, `content_hash`, `prompt_version`, `vocabulary`), model-ready exports (§10), Phase 4b, risks, and §18. |
 
 ## 17. YouTube URLs (under discussion, not planned yet)
 
@@ -384,4 +402,33 @@ Claude can't watch a YouTube link (web fetch sees only the page HTML), so the ap
 | F | Gemini API for the video step (accepts public YouTube URLs) | Full analysis | Adds a second AI provider; conflicts with the one-model decision and muddies the certainty method |
 
 **Suggested direction:** a "YouTube URL" input with a Quick mode (B + C) and an opt-in Full mode (A) with a Terms of Service note; D/E for client work.
+
+## 18. Creative features for performance modelling (Phase 4b)
+
+**Goal:** make every analyzed asset a row of consistent, numeric creative features that can be joined to performance data (CTR, conversions, sales lift, and so on) and used in propensity models and media mix models.
+
+**The core tension:** tags are deliberately **emergent**: Claude picks the words, which is good for discovery. Models need **the same feature name for the same idea across all assets**. The plan keeps both, as two layers:
+
+| Layer | What it is | Used for |
+|---|---|---|
+| **Tags** (per asset) | Claude's own words, merged within the asset's K runs (as now) | The per-asset chart, creative review, discovery |
+| **Features** (library vocabulary) | Tags mapped to shared canonical terms across *all* saved assets | Feature matrix, modelling, cross-asset comparison |
+
+**How the vocabulary is built:**
+1. When an asset is saved, each new canonical tag is compared with the existing vocabulary in one cheap Claude call: "is this the same as an existing feature, or new?" The same rules as the within-asset merge apply (synonyms merge; broader and narrower terms stay separate).
+2. Matches map to the existing feature; new ones are added. The raw tag is always kept.
+3. A **Vocabulary** view lets you rename, merge, or split features, and can lock the vocabulary so further assets only map onto existing features (a stable feature set for a modelling project).
+4. If the vocabulary changes, the feature matrix is rebuilt from stored tags with no new API calls.
+
+**Feature values:** certainty (0–1), or 0 when absent; optionally binary at a threshold. Alignment scores (−1…+1 per dimension, plus overall) are included as features when a brief was used. Emergent categories (Phase 5) let you aggregate, e.g. "any people feature", "any outdoor setting".
+
+**Reproducibility:** each value records model + prompt version. The export warns if the library mixes versions, and a **"re-run library"** action re-analyzes all assets under the current version (cost shown first).
+
+**Out of scope here:** importing performance data and fitting the models. The app produces model-ready features; modelling happens in the user's tools (Python, R, or an MMM platform).
+
+**Open questions (for Phase 4b):**
+1. **Join key:** what identifies a creative in your performance data (platform ad ID, creative ID, filename, something else)? This decides how `asset_key` is entered: typed, read from the filename pattern, or imported from a mapping CSV.
+2. **Feature encoding:** certainty values, binary, or both?
+3. **Vocabulary control:** fully emergent (vocabulary grows with each asset) or a lockable feature set per project, as proposed?
+4. **Scale:** roughly how many assets per modelling project? This affects cost (≈ $0.05–0.12 per asset) and whether batch processing matters.
 **Open questions:** whose videos (client, competitor, own)? typical length? is the download option (A) acceptable? is a second AI provider (F) worth considering?
