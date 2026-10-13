@@ -105,6 +105,9 @@ with tab_analyze:
             mode, value = "threshold", st.slider("Minimum certainty (%)", 0, 100, config.DEFAULT_THRESHOLD)
 
     if st.button("Analyze", type="primary", disabled=uploaded is None):
+        # Drop the previous asset's result (and its alignment) so a failed or slow run can't leave it on screen.
+        st.session_state.pop("result", None)
+        st.session_state.pop("align_error", None)
         with st.status(f"Analyzing {uploaded.name}…", expanded=True) as status:
             try:
                 st.session_state["result"] = analyze_asset(
@@ -166,6 +169,7 @@ with tab_analyze:
         # ---- Brief alignment ----
         st.divider()
         st.subheader("Creative brief alignment")
+        st.caption(f"Evaluating: {result['filename']}")
         current_brief = st.session_state.get("brief", "").strip()
         alignment = result.get("alignment")
 
