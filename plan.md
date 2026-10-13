@@ -61,6 +61,9 @@ _"Impact Foundry Image Analysis and Tagging for Creative Optimization in Adverti
 | 10 | **Brief drafting helper**: product description → structured brief → editable text in the brief box |
 | 11 | **Saved results** (History) and **export** (CSV + JSON) |
 | 12 | Runs locally on the laptop, single user |
+| 13 | **Story reading for video:** plot beats over time, characters, and story-vs-brief scores (§6.3a) |
+| 14 | **PDF report** of a run, opened in a new tab (§10) |
+| 15 | **Submit brief** button with a read-only echo of the submitted brief (§8) |
 
 ### Out of scope for now
 Auth and multi-user, cloud hosting, job queues, rate limiting, billing, fixed or client taxonomies, brief upload (.docx/.pdf), configurable alignment dimensions, batch-level summary views.
@@ -133,6 +136,7 @@ Output tokens, which include Claude's reasoning, are the main cost driver for im
 
 ```
 Upload ─► Ingest ─► Prep ─► Caption+Tags (K runs) ─► Merge ─► Score ─► Categorize ─► Filter ─► [Brief alignment] ─► Save ─► Charts/Export
+                                 └─► (video only) Story reading, in parallel with the tagging runs ─┘
 ```
 
 ### 6.1 Ingest
@@ -147,6 +151,7 @@ Fix EXIF orientation, convert to RGB, resize to ≤1568 px on the long edge.
 ### 6.3 Video prep ✅ (`.mp4`; `core/video.py`, `core/audio.py`)
 1. **Probe** with ffprobe: duration, size, whether there is an audio track.
 2. **Frames:** ffmpeg scene-change detection (scene score > 0.3). The frame count is about one frame per 2 s, between 4 and 10 frames. The chosen frames are the opening shot, a frame 0.3 s after each cut, and then the evenly spaced points farthest from those already chosen; near-duplicates are dropped. With many cuts, an even spread of them is kept. Frames are resized to **1024 px** (vs 1568 for images) to keep cost down. Example: a 19 s ad with 4 cuts gave 9 frames.
+   **A second, denser frame set feeds the story reading (§6.3a).** It uses the same scene changes. Frames for both sets are extracted from the file once (6 ffmpeg workers in parallel) and then resized separately.
 3. **Audio:** ffmpeg → 16 kHz mono WAV, then:
    - **Speech (always on, local):** faster-whisper → timestamped segments + language. Audio never leaves the laptop; only the transcript text goes to Claude.
    - **Sound events (optional, Phase 7):** AST on ~10 s windows. Keep labels ≥ 0.15 probability.
@@ -197,8 +202,31 @@ After merging (§7), one cheap call groups the canonical tags into **categories 
 - Output is placed in the **brief text area for editing** before analysis. Sections map naturally onto the four alignment dimensions.
 - _(Phase 4)_ Drafts will be saved with the run, or on their own if no analysis follows. They're not saved yet.
 
-### Story reading (video) ✅ 2026-10-13 (`core/narrative.py`)
-One extra Claude call per video, run alongside tagging. It sees a denser, smaller frame set than tagging does: one frame about every **0.75 s** (scene-change frames included), capped at **60**, each at **512 px** (`STORY_*` in `config.py`), plus the transcript. Returns the logline, timestamped beats, characters, arc and gaps; with a brief it also scores plot, characters, structure and product timing and gives suggestions, all in the same call. Characters are described by role and apparent appearance; real people are never identified from face or voice (a name is used only if shown on screen or said). The result is an inference from sampled material and says what it couldn't determine. Not repeated K times, so it is a single judgment like brief alignment. If it fails, the rest of the analysis still completes. Measured: 37 frames, ≈ 10.5k input tokens, ≈ $0.05, ≈ 33 s on a 28 s ad. Re-evaluating against a changed brief re-reads the story. Story section also appears in the PDF report (after the tag table).
+### 6.3a Story reading (video) ✅ 2026-10-13 (`core/narrative.py`)
+
+**Purpose:** add a temporal layer. Tagging looks at the video as a whole; this step reads it as a sequence: what happens when, who the characters are, and whether the plot and characters fit the brief. Plot and characters are derived from the frames and the transcript together.
+
+**Sampling logic (story frame set).** Chosen by the same function as the tagging frames, `video.pick_timestamps`, with different parameters (`STORY_*` in `config.py`):
+1. **Target count** `n = round(duration / 0.75 s)`, clamped to **4 ≤ n ≤ 60**. A 28 s ad targets 37 frames. Density is set in **seconds, not as a share of frames**, so it doesn't depend on the file's frame rate (24 vs 60 fps would otherwise give 72 vs 180 frames of near-identical images), and cost can't grow without bound. Videos longer than 45 s (the 60-frame cap) get wider spacing.
+2. **Which times:** the opening shot (at 0.5 s, or mid-clip for very short videos); then a frame **0.3 s after every scene change** (ffmpeg scene score > 0.3), so short shots are not missed; then evenly spaced fill-ins at the points farthest from any chosen frame. If there are more cuts than `n`, an even spread of the cuts is kept. Frames closer together than `duration / (2n)` are dropped as near-duplicates.
+3. **Size:** each frame is resized to **512 px** on the long edge (vs 1024 px for tagging), about a quarter of the tokens per frame. This is enough to follow action and characters but not to read small on-screen text.
+4. **Separate from tagging:** tagging and alignment still use their own 4–10 frames at 1024 px (§6.3), so their cost and results are unchanged.
+5. Each frame is labelled with its timestamp in the request (as for tagging) so beats can cite times. The speech transcript is included.
+
+**The call (one call, as decided).** Run in a thread alongside the K tagging runs, so it adds little wall-clock time. Structured output:
+- `logline`; `beats[]` (start, end, summary, evidence), roughly 4–12 in time order; `characters[]` (label, role, apparent appearance, first seen, presence brief/recurring/central, speaks); `arc` (hook, middle, ending or call to action); `gaps[]` (what couldn't be determined).
+- **With a brief**, the same call also returns four scores from −1 to +1, each with a rationale: **plot** (conveys the proposition and key message), **characters** (fit the audience, tone and casting), **structure** (hook, middle, ending/CTA, pacing), **product timing** (when and for how long the product appears). Absence scores 0, as for alignment. It also returns 3–5 suggestions citing timestamps. The scores are **shown separately from the overall alignment score**, which is unchanged.
+
+**Rules and limits:**
+- Characters are described by role and apparent appearance. Real people are never identified from face or voice; a name is used only if it is shown on screen or said in the transcript, and is attributed to that source. The transcript has no speaker labels, so lines are attributed to a character only when context makes it clear.
+- The result is an **inference from sampled material**: action between frames, music, sound effects and small text are not seen, and the output lists these under "gaps".
+- A **single judgment**, not repeated K times, so there is no agreement-based certainty (treat small score differences as noise, as for alignment).
+- **Only for videos:** the call is made only when the video produced timestamped frames, and `read_story` refuses empty input or still images without calling the API. Images never trigger it.
+- If it fails, the rest of the analysis still completes and the Story section shows the error. Re-evaluating against a changed brief re-reads the story with the new brief.
+
+**Cost and timing (measured 2026-10-13, 28 s ad, with a brief):** 37 frames, ≈ 10.5k input and ≈ 2.8k output tokens, ≈ **$0.05**, ≈ 33 s (plus ≈ 17 s of prep for frames and Whisper). The sidebar video estimate includes it (`EST_COST_VIDEO_STORY`). Effort level: `EFFORT_NARRATIVE = "medium"`.
+
+**Display:** the Story section under the video (§8) and a Story section in the PDF report (§10). Tested on the Target Wellness ad: it found the order of shots, the screen-recording overlay, and a named presenter attributed to the on-screen text.
 
 ---
 
@@ -298,7 +326,9 @@ content_analyzer/
     merge.py                ✅ normalization + synonym merge (categorization in Phase 5)
     scoring.py              ✅ certainty + filtering (pure functions)
     brief.py                ✅ brief drafting + alignment + suggestions, DIMENSIONS
-    analyze.py              ✅ analyze_asset: prep (image/video) -> K runs -> merge -> score -> alignment
+    analyze.py              ✅ analyze_asset: prep (image/video) -> K runs (+ story for video) -> merge -> score -> alignment
+    narrative.py            ✅ story reading for video: beats, characters, story-vs-brief scores (§6.3a)
+    report.py               ✅ PDF report (reportlab; charts rendered with vl-convert)
     video.py                ✅ find ffmpeg, probe, scene changes, pick_timestamps, frames, audio
     audio.py                ✅ faster-whisper transcription (optional AST sound events in Phase 7)
     ingest.py                  upload/zip handling (Phase 5)
@@ -311,10 +341,11 @@ content_analyzer/
     test_scoring.py         ✅ scoring, filtering, normalize
     test_app.py             ✅ UI renders (AppTest), re-filtering, alignment, help tab, video results; no API calls
     test_video.py           ✅ frame picking, media blocks, ffmpeg on a generated 4 s clip; no API calls
+    test_narrative.py       ✅ story with/without brief, score clamping, story frame density and cap, refuses images; no API calls
     assets/sample_sailboat.png ✅ synthetic test image
   data/                     gitignored: logs (db, assets from Phase 4)
   .env / .env.example       ✅ API key (gitignored) / format example
-  requirements.txt          ✅
+  requirements.txt          ✅ (includes reportlab and vl-convert-python for the PDF report)
   requirements-audio.txt    ✅ optional: torch + transformers for sound events
   plan.md
 ```
@@ -334,6 +365,7 @@ content_analyzer/
 | 4 | SQLite persistence, History tab, CSV/JSON export, saved brief drafts; **`asset_key` / `content_hash` / `prompt_version`** stored from the start | Past run reopens identically; exports open in Excel | **Next** |
 | 4b | **Library vocabulary + model-ready export** (§18): cross-asset feature merge, editable vocabulary, feature-matrix and long-format CSVs with a data dictionary | Two assets with "sailboat" vs "sailing boat" land in the same column; the matrix loads cleanly into Python/R/Excel | After Phase 4 (needs saved results across assets) |
 | 5 | Zip ingest (images) + emergent categories | Mixed zip with junk files handled cleanly; chart colored by category | |
+| 6b | **Story reading for video** (§6.3a): denser 0.75 s / 512 px frame set, beats, characters, story scores vs brief (shown separately from overall alignment), PDF section | Plot and characters read plausibly on a real ad; cost ≈ $0.05 per video; images never trigger it | ✅ 2026-10-13. Tested on one ad (Target Wellness) with a made-up brief; only the first part of the output was reviewed. More videos are needed to judge story-score quality |
 | 6 | Video visual tagging (ffmpeg frames) + speech via faster-whisper | Tags cite frame timestamps or quotes | ✅ 2026-10-05 for `.mp4` (done before Phases 4–5 at the user's request). Tested with screen-recorded ads. Speech tested only on a no-speech ad so far |
 | 7 | **Optional** sound-event module (AST) | App works with and without `requirements-audio.txt` installed | |
 | 8 | Polish: error handling (API errors, bad files), logging | One failed asset doesn't break the run | Partly done: request timeout + retries, refusal / incomplete-output errors shown in the UI |
@@ -353,7 +385,9 @@ content_analyzer/
 - **Corporate network (TLS inspection):** downloads from Python (e.g. Hugging Face models) fail certificate checks unless `truststore` is used. Any new download in future phases (e.g. the AST sound model) should go through the same path.
 - **Library drift:** faster-whisper's PyAV-based decoder broke with the installed PyAV; worked around by passing raw audio. Pinning versions in `requirements.txt` would prevent surprises like this.
 - **Streamlit module caching:** after code changes under `core/`, restart the app (a refresh caused an `ImportError` once).
-- **Long videos:** the 10-frame cap is sized for 15–60 s ads. Longer videos are sampled more sparsely, and transcription takes longer on CPU.
+- **Long videos:** the 10-frame tagging cap is sized for 15–60 s ads. Longer videos are sampled more sparsely, and transcription takes longer on CPU. The story reading's cap is 60 frames (45 s at 0.75 s spacing); beyond that its spacing widens, so short moments in long videos can be missed.
+- **Story reading is inference from samples.** It can't see between frames, hear music or effects, or reliably tell who is speaking (Whisper has no speaker labels). Characters are described by appearance and role, never identified from face or voice. Story scores are a single judgment, not calibrated; treat small differences as noise.
+- **PDF report depends on `vl-convert-python` and `reportlab`:** both install as plain wheels (no extra binaries). Report text is limited to Latin-1-style characters (others become "?").
 - **Windows tooling note:** PowerShell 5.1's `Get-Content`/`Set-Content` reads and writes non-UTF-8 by default and garbled characters in `app.py` once. Edit source files with an editor, not PowerShell text replacement.
 
 ## 14. Later ideas (not v1)
@@ -385,6 +419,10 @@ content_analyzer/
 | Absence in brief alignment | Scores **0**, not −1 (2026-09-30) |
 | Chart labels | Every bar must show its label (2026-10-01) |
 | Second use: features for performance modelling | Added to the plan (2026-10-05, from the README): stable asset keys, library vocabulary, model-ready exports (§18) |
+| Brief editing | A **Submit brief** button; edits apply only on submit, and the submitted brief is echoed read-only below the box (2026-10-13) |
+| PDF report | One run, fixed section order, opened in a new tab from a button, footer with the GitHub URL and contact email (2026-10-13) |
+| Story reading | Temporal analysis of video (plot beats, characters) in **one** call; story scores **shown separately** from overall alignment (2026-10-13) |
+| Story frame sampling | One frame per ~0.75 s (not a % of frames), scene-change frames included, cap 60, 512 px, used for the story call only (2026-10-13) |
 | Video support timing | Build `.mp4` support now, before Phase 4 (2026-10-05) |
 | YouTube videos | No direct URL support yet; options under discussion (§17). Meanwhile, screen-record with Snipping Tool and upload the `.mp4` (works) |
 
