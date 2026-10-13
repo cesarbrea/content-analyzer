@@ -31,11 +31,11 @@ def tag_chart(shown: list[TagScore]) -> tuple[alt.LayerChart, int]:
     return (bars + text).properties(height=h), h + 40
 
 
-def alignment_chart(alignment: dict) -> tuple[alt.LayerChart, int]:
+def alignment_chart(alignment: dict, order: list[str] | None = None) -> tuple[alt.LayerChart, int]:
     adf = pd.DataFrame([{"dimension": d.capitalize(), "score": v["score"], "rationale": v["rationale"]}
                         for d, v in alignment["dimensions"].items()])
     adf["label"] = adf["score"].map(lambda s: f"{s:+.2f}")
-    order = [d.capitalize() for d in DIMENSIONS]
+    order = [d.capitalize() for d in (order or DIMENSIONS)]
     base = alt.Chart(adf).encode(y=alt.Y("dimension:N", sort=order, title=None, axis=alt.Axis(**LABEL_AXIS)))
     bars = base.mark_bar().encode(
         # Padded domain keeps "-1.00"/"+1.00" labels clear of the axis labels and chart edge.

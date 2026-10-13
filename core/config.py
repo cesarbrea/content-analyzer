@@ -22,6 +22,7 @@ PRICES = {
 EFFORT_TAGGING = "low"
 EFFORT_MERGE = "low"
 EFFORT_ALIGNMENT = "medium"
+EFFORT_NARRATIVE = "medium"
 EFFORT_BRIEF_DRAFT = "medium"
 
 DEFAULT_K = 3              # independent tagging runs per asset
@@ -35,6 +36,11 @@ VIDEO_MAX_FRAMES = 10
 VIDEO_SECONDS_PER_FRAME = 2.0   # target density before the min/max caps
 VIDEO_SCENE_THRESHOLD = 0.3     # ffmpeg scene score (0-1) that counts as a cut
 VIDEO_FRAME_EDGE = 1024         # px, smaller than single images to keep token cost down
+# Story reading (video): a denser, smaller set of frames for one narrative call.
+STORY_SECONDS_PER_FRAME = 0.75  # one frame every ~0.75 s ...
+STORY_MIN_FRAMES = 4
+STORY_MAX_FRAMES = 60           # ... capped here, so long videos get wider spacing
+STORY_FRAME_EDGE = 512          # px; about a quarter of the tokens of a 1024 px frame
 WHISPER_MODEL = "base"          # faster-whisper model size; downloads once (~150 MB)
 
 # certainty = W_AGREEMENT * agreement + W_CONFIDENCE * mean_self_confidence
@@ -53,6 +59,7 @@ EST_COST_ALIGNMENT = 0.012
 EST_COST_VIDEO_RUN = 0.029
 EST_COST_VIDEO_MERGE = 0.011
 EST_COST_VIDEO_ALIGNMENT = 0.023
+EST_COST_VIDEO_STORY = 0.05   # story reading: ~37 frames at 512 px, measured 2026-10-13 on a 28 s ad (with a brief)
 
 
 def cost_usd(model: str, input_tokens: int, output_tokens: int) -> float:

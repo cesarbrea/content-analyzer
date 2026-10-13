@@ -11,6 +11,7 @@ from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Tabl
 
 from charts import alignment_chart, tag_chart
 from core.scoring import TagScore
+from core.video import fmt_time
 
 GITHUB_URL = "https://github.com/cesarbrea/content-analyzer"
 CONTACT_EMAIL = "cesar.brea@alixpartners.com"
@@ -100,6 +101,27 @@ def build_report(result: dict, shown: list[TagScore], product_desc: str, brief: 
             ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ]))
         story.append(table)
+
+    narr = result.get("story")
+    if narr:
+        story.append(Paragraph("Story", h2))
+        story.append(Paragraph(_t(narr["logline"]), body))
+        story.append(Spacer(1, 4))
+        for b in narr["beats"]:
+            story.append(Paragraph(f"<b>{fmt_time(b['start'])}-{fmt_time(b['end'])}</b> {_t(b['summary'])}", body))
+        story.append(Paragraph("Characters", h2))
+        for c in narr["characters"]:
+            story.append(Paragraph(f"• <b>{_t(c['label'])}</b> ({_t(c['role'])}, {c['presence']}): "
+                                   f"{_t(c['description'])}", body))
+        story.append(Spacer(1, 4))
+        story.append(Paragraph(f"<b>Arc:</b> {_t(narr['arc'])}", body))
+        if narr.get("scores"):
+            story.append(Paragraph("Story alignment with the brief", h2))
+            for d, v in narr["scores"].items():
+                story.append(Paragraph(f"<b>{d.replace('_', ' ').capitalize()} ({v['score']:+.2f}):</b> "
+                                       f"{_t(v['rationale'])}", body))
+            for sug in narr["suggestions"]:
+                story.append(Paragraph(f"• {_t(sug)}", body))
 
     story.append(Paragraph("Session", h2))
     story.append(Paragraph(

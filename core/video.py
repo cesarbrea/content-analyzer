@@ -63,10 +63,11 @@ def scene_changes(path: Path, threshold: float = VIDEO_SCENE_THRESHOLD) -> list[
     return [float(t) for t in re.findall(r"pts_time:([\d.]+)", r.stderr)]
 
 
-def pick_timestamps(duration: float, scenes: list[float]) -> list[float]:
+def pick_timestamps(duration: float, scenes: list[float], seconds_per_frame: float = VIDEO_SECONDS_PER_FRAME,
+                    min_frames: int = VIDEO_MIN_FRAMES, max_frames: int = VIDEO_MAX_FRAMES) -> list[float]:
     """Frame times: the opening shot, a frame just after each scene change, and evenly spaced
     fill-ins, with near-duplicates removed and the total capped."""
-    n = max(VIDEO_MIN_FRAMES, min(VIDEO_MAX_FRAMES, round(duration / VIDEO_SECONDS_PER_FRAME)))
+    n = max(min_frames, min(max_frames, round(duration / seconds_per_frame)))
     min_gap = duration / (n * 2)
     end = max(0.0, duration - 0.1)
 

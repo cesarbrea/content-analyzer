@@ -197,6 +197,9 @@ After merging (§7), one cheap call groups the canonical tags into **categories 
 - Output is placed in the **brief text area for editing** before analysis. Sections map naturally onto the four alignment dimensions.
 - _(Phase 4)_ Drafts will be saved with the run, or on their own if no analysis follows. They're not saved yet.
 
+### Story reading (video) ✅ 2026-10-13 (`core/narrative.py`)
+One extra Claude call per video, run alongside tagging. It sees a denser, smaller frame set than tagging does: one frame about every **0.75 s** (scene-change frames included), capped at **60**, each at **512 px** (`STORY_*` in `config.py`), plus the transcript. Returns the logline, timestamped beats, characters, arc and gaps; with a brief it also scores plot, characters, structure and product timing and gives suggestions, all in the same call. Characters are described by role and apparent appearance; real people are never identified from face or voice (a name is used only if shown on screen or said). The result is an inference from sampled material and says what it couldn't determine. Not repeated K times, so it is a single judgment like brief alignment. If it fails, the rest of the analysis still completes. Measured: 37 frames, ≈ 10.5k input tokens, ≈ $0.05, ≈ 33 s on a 28 s ad. Re-evaluating against a changed brief re-reads the story. Story section also appears in the PDF report (after the tag table).
+
 ---
 
 ## 7. Certainty ("tagging accuracy") method
@@ -231,6 +234,7 @@ _Later: calibrate against a hand-labelled set and add a reliability chart._
    - **Results:**
      - image, or **video player** with duration / size / frame count · cost/tokens · **caption** · **tag certainty chart** (single color for now; colored by category in Phase 5; tooltips show agreement, self-confidence, runs seen, evidence)
      - _(video)_ **Frames sent to Claude** grid with timestamps · **Speech transcript** with timestamps (or "No speech detected. Music and sound effects aren't analyzed yet.")
+     - _(video)_ **Story:** logline, timeline of beats with timestamps, characters (role, appearance, whether they speak), arc, what couldn't be determined; with a brief, four **story scores** (plot, characters, structure, product timing; −1…+1) plus timestamped suggestions, **shown separately from the overall alignment score**
      - **Creative brief alignment:** overall metric, diverging chart, rationales, suggestions, brief used, re-evaluate button
      - expanders: Tag details · Merged variants · Raw data (debug)
      - **Create PDF report** button at the bottom (§10). After it runs, an **Open report in a new tab** button opens the PDF in a separate browser tab, where it can be downloaded.
@@ -392,6 +396,7 @@ content_analyzer/
 | 2026-10-01 | Chart fix: every bar label shown (no label hiding, 30 px rows, padded axes); charts moved to `charts.py`. Plan updated to match the build. First git commit; pushed to private repo github.com/cesarbrea/content-analyzer. |
 | 2026-10-05 | YouTube options discussed (§17). Phase 6 for `.mp4`: scene-based frame sampling, local transcription, video-aware prompts, frames/transcript display, ignore player chrome. Fixes: `truststore` for the corporate network, raw-audio input to faster-whisper, ffmpeg lookup. Measured video cost ≈ $0.12 with a brief. 18 tests. |
 | 2026-10-05 | Added the second use from the README, creative features for performance modelling: purpose (§1), data model fields (`asset_key`, `content_hash`, `prompt_version`, `vocabulary`), model-ready exports (§10), Phase 4b, risks, and §18. |
+| 2026-10-13 | **Story reading for video** (§8): plot beats over time, characters, and story-vs-brief scores in one call over ~0.75 s-spaced 512 px frames; scores shown separately from overall alignment. |
 | 2026-10-13 | Brief box now has a **Submit brief** button and a read-only echo of the submitted brief. **PDF report** (§10) opened in a new tab. New dependencies: reportlab, vl-convert-python. Also: Analyze clears the previous result so a prior asset's evaluation can't stay on screen. |
 
 ## 17. YouTube URLs (under discussion, not planned yet)

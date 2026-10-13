@@ -13,6 +13,7 @@ from core import config
 from core.analyze import analyze_asset, blocks_for
 from core.brief import draft_brief, evaluate_alignment
 from core.llm import ClaudeCallError
+from core.narrative import NARRATIVE_DIMENSIONS, read_story
 from core.report import build_report
 from core.scoring import filter_tags
 from core.video import fmt_time
@@ -69,6 +70,15 @@ def _on_reevaluate():
     r["alignment"] = alignment
     r["usage"]["input_tokens"] += u["input_tokens"]
     r["usage"]["output_tokens"] += u["output_tokens"]
+    if r.get("kind") == "video" and r.get("story_frames"):
+        try:
+            r["story"], u = read_story(r["story_frames"], r["transcript"], r["video_meta"].get("has_audio", False),
+                                       st.session_state.get("brief", ""), r["filename"])
+            r["story_error"] = None
+            r["usage"]["input_tokens"] += u["input_tokens"]
+            r["usage"]["output_tokens"] += u["output_tokens"]
+        except Exception as e:
+            r["story_error"] = f"{type(e).__name__}: {e}"
     r["cost_usd"] = config.cost_usd(r["model"], r["usage"]["input_tokens"], r["usage"]["output_tokens"])
 
 
@@ -82,7 +92,7 @@ with st.sidebar:
     has_brief = bool(st.session_state.get("brief", "").strip())
     est_img = (config.EST_COST_PER_RUN * k + config.EST_COST_MERGE
                + (config.EST_COST_ALIGNMENT if has_brief else 0))
-    est_vid = (config.EST_COST_VIDEO_RUN * k + config.EST_COST_VIDEO_MERGE
+    est_vid = (config.EST_COST_VIDEO_RUN * k + config.EST_COST_VIDEO_MERGE + config.EST_COST_VIDEO_STORY
                + (config.EST_COST_VIDEO_ALIGNMENT if has_brief else 0))
     st.caption(f"Estimated cost: ~${est_img:.3f} per image, ~${est_vid:.2f} per short video"
                + (" (incl. brief alignment)" if has_brief else ""))
@@ -233,6 +243,42 @@ with tab_analyze:
             with st.expander("Brief used for this evaluation"):
                 st.text(alignment["brief"])
 
+        # ---- Video: story ----
+        if result.get("kind") == "video":
+            st.divider()
+            st.subheader("Story")
+            story = result.get("story")
+            if story is None:
+                st.warning(f"The story reading failed: {result.get('story_error') or 'no result'}")
+            else:
+                st.caption(f"Inferred from {len(result['story_frames'])} sampled frames and the transcript. "
+                           "Music, sound effects and action between frames aren't seen.")
+                st.write(story["logline"])
+                st.markdown("**Timeline**")
+                for b in story["beats"]:
+                    st.markdown(f"`{fmt_time(b['start'])}–{fmt_time(b['end'])}` {b['summary']}")
+                st.markdown("**Characters**")
+                for c in story["characters"]:
+                    st.markdown(f"- **{c['label']}** ({c['role']}; {c['presence']}"
+                                f"{', speaks' if c['speaks'] else ''}; first at {fmt_time(c['first_seen'])}): "
+                                f"{c['description']}")
+                st.markdown(f"**Arc:** {story['arc']}")
+                if story["gaps"]:
+                    with st.expander("What couldn't be determined"):
+                        for g in story["gaps"]:
+                            st.markdown(f"- {g}")
+                if story.get("scores"):
+                    st.markdown("**Story alignment with the brief** (shown separately from the overall score above)")
+                    chart, h = alignment_chart({"dimensions": story["scores"]}, order=list(NARRATIVE_DIMENSIONS))
+                    st.altair_chart(chart, width="stretch", height=h)
+                    for d, v in story["scores"].items():
+                        st.markdown(f"**{d.replace('_', ' ').capitalize()} ({v['score']:+.2f}):** {v['rationale']}")
+                    st.markdown("**Story suggestions**")
+                    for s in story["suggestions"]:
+                        st.markdown(f"- {s}")
+                elif current_brief:
+                    st.caption("The story was read without a brief. Use the evaluate button above to score it.")
+
         # ---- Debug details ----
         st.divider()
         with st.expander("Tag details"):
@@ -240,7 +286,7 @@ with tab_analyze:
         with st.expander("Merged variants"):
             st.write(result["merge_map"] or "No variants were merged.")
         with st.expander("Raw data (debug)"):
-            skip = ("image_jpeg", "video_bytes", "frames", "scores", "observations")
+            skip = ("image_jpeg", "video_bytes", "frames", "story_frames", "scores", "observations")
             debug = {k_: v for k_, v in result.items() if k_ not in skip}
             debug["frame_times"] = [t for t, _ in result.get("frames", [])]
             debug["observations"] = [asdict(o) for o in result["observations"]]

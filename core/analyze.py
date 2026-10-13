@@ -7,9 +7,11 @@ from typing import Callable
 
 from core import video
 from core.brief import evaluate_alignment
-from core.config import MODEL, VIDEO_FRAME_EDGE, VIDEO_TYPES, cost_usd
+from core.config import (MODEL, STORY_FRAME_EDGE, STORY_MAX_FRAMES, STORY_MIN_FRAMES, STORY_SECONDS_PER_FRAME,
+                         VIDEO_FRAME_EDGE, VIDEO_TYPES, cost_usd)
 from core.images import prepare_image
 from core.merge import merge_tags, normalize
+from core.narrative import read_story
 from core.scoring import Observation, score_tags
 from core.tagger import media_blocks, tag_asset
 
@@ -28,20 +30,31 @@ def analyze_asset(data: bytes, filename: str, k: int, brief: str = "",
 
     if kind == "image":
         frames = [(None, prepare_image(data))]
-        transcript, meta = None, {}
+        transcript, meta, story_frames = None, {}, []
     else:
-        frames, transcript, meta = _prepare_video(data, filename, say)
+        frames, transcript, meta, story_frames = _prepare_video(data, filename, say)
     blocks = media_blocks(frames, transcript, meta.get("has_audio", False))
 
     say(f"Tagging: 0/{k} runs done")
     runs: dict[int, object] = {}
-    with ThreadPoolExecutor(max_workers=k) as pool:
+    story, story_error = None, None
+    with ThreadPoolExecutor(max_workers=k + 1) as pool:
         futures = {pool.submit(tag_asset, blocks, kind, i, filename): i for i in range(k)}
+        # The story reading runs alongside tagging; a failure there doesn't sink the rest of the analysis.
+        story_future = (pool.submit(read_story, story_frames, transcript, meta.get("has_audio", False), brief, filename)
+                        if kind == "video" and story_frames else None)
         for fut in as_completed(futures):
             result, u = fut.result()
             runs[futures[fut]] = result
             _add(usage, u)
             say(f"Tagging: {len(runs)}/{k} runs done")
+        if story_future:
+            say(f"Reading the story ({len(story_frames)} frames)")
+            try:
+                story, u = story_future.result()
+                _add(usage, u)
+            except Exception as e:
+                story_error = f"{type(e).__name__}: {e}"
 
     say("Merging synonymous tags across runs")
     raw = [(i, t) for i in sorted(runs) for t in runs[i].tags]
@@ -78,6 +91,9 @@ def analyze_asset(data: bytes, filename: str, k: int, brief: str = "",
         "observations": observations,
         "merge_map": {a: b for a, b in sorted(mapping.items()) if a != b},
         "alignment": alignment,
+        "story": story,                   # {logline, beats, characters, arc, gaps, scores?, suggestions?} or None
+        "story_error": story_error,
+        "story_frames": story_frames,     # [(timestamp, small jpeg)] for re-scoring against a new brief
         "usage": usage,
         "cost_usd": cost_usd(MODEL, usage["input_tokens"], usage["output_tokens"]),
         "frames": frames,                 # [(timestamp or None, jpeg)]
@@ -93,16 +109,23 @@ def blocks_for(result: dict) -> list[dict]:
     return media_blocks(result["frames"], result["transcript"], result["video_meta"].get("has_audio", False))
 
 
-def _prepare_video(data: bytes, filename: str, say) -> tuple[list, dict | None, dict]:
+def _prepare_video(data: bytes, filename: str, say) -> tuple[list, dict | None, dict, list]:
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / f"input{Path(filename).suffix.lower()}"
         path.write_bytes(data)
         meta = video.probe(path)
 
         say("Finding scene changes")
-        times = video.pick_timestamps(meta["duration"], video.scene_changes(path))
-        say(f"Extracting {len(times)} frames")
-        frames = [(t, prepare_image(video.extract_frame(path, t), VIDEO_FRAME_EDGE)) for t in times]
+        scenes = video.scene_changes(path)
+        times = video.pick_timestamps(meta["duration"], scenes)
+        story_times = video.pick_timestamps(meta["duration"], scenes, STORY_SECONDS_PER_FRAME,
+                                            STORY_MIN_FRAMES, STORY_MAX_FRAMES)
+        say(f"Extracting {len(times)} frames for tagging and {len(story_times)} smaller frames for the story")
+        with ThreadPoolExecutor(max_workers=6) as pool:
+            full = list(pool.map(lambda t: video.extract_frame(path, t), sorted(set(times) | set(story_times))))
+        raw = dict(zip(sorted(set(times) | set(story_times)), full))
+        frames = [(t, prepare_image(raw[t], VIDEO_FRAME_EDGE)) for t in times]
+        story_frames = [(t, prepare_image(raw[t], STORY_FRAME_EDGE)) for t in story_times]
 
         transcript = None
         if meta["has_audio"]:
@@ -111,7 +134,7 @@ def _prepare_video(data: bytes, filename: str, say) -> tuple[list, dict | None, 
             video.extract_audio(path, wav)
             from core.audio import transcribe
             transcript = transcribe(wav)
-    return frames, transcript, meta
+    return frames, transcript, meta, story_frames
 
 
 def _add(total: dict, u: dict) -> None:
