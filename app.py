@@ -1,9 +1,11 @@
 """Content Analyzer. Run with: streamlit run app.py"""
+import base64
 import json
 from dataclasses import asdict
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 from certainty_help import render_certainty_help
 from charts import alignment_chart, tag_chart
@@ -11,6 +13,7 @@ from core import config
 from core.analyze import analyze_asset, blocks_for
 from core.brief import draft_brief, evaluate_alignment
 from core.llm import ClaudeCallError
+from core.report import build_report
 from core.scoring import filter_tags
 from core.video import fmt_time
 
@@ -32,11 +35,26 @@ def _on_draft():
         return
     try:
         text, u = draft_brief(desc)
-        st.session_state["brief"] = text
+        st.session_state["brief_input"] = text
         cost = config.cost_usd(config.MODEL, u["input_tokens"], u["output_tokens"])
-        st.session_state["draft_note"] = f"Draft added to the brief below (${cost:.3f}). Edit it as needed."
+        st.session_state["draft_note"] = f"Draft added to the brief box below (${cost:.3f}). Edit it if needed, then press Submit brief."
     except Exception as e:
         st.session_state["draft_error"] = f"Drafting failed: {e}"
+
+
+def _on_submit_brief():
+    st.session_state["brief"] = st.session_state.get("brief_input", "")
+
+
+def _on_make_report(shown, sig):
+    r = st.session_state["result"]
+    try:
+        pdf = build_report(r, shown, st.session_state.get("product_desc", ""), st.session_state.get("brief", ""))
+    except Exception as e:
+        st.session_state["report_error"] = f"Report failed: {type(e).__name__}: {e}"
+        return
+    st.session_state.pop("report_error", None)
+    st.session_state["report"] = {"pdf": pdf, "sig": sig}
 
 
 def _on_reevaluate():
@@ -85,9 +103,17 @@ with tab_analyze:
             st.error(st.session_state["draft_error"])
         elif "draft_note" in st.session_state:
             st.success(st.session_state.pop("draft_note"))
-    st.text_area("Creative brief", key="brief", height=260,
+    st.text_area("Creative brief", key="brief_input", height=260,
                  placeholder="Paste a creative brief here (or draft one above). When a brief is present, each "
                              "asset is scored against it on customer, context, product, and style.")
+    st.button("Submit brief", on_click=_on_submit_brief,
+              help="Edits to the box above only take effect once submitted.")
+    submitted = st.session_state.get("brief", "")
+    if submitted.strip():
+        st.caption("Submitted brief (this is what the next analysis will use):")
+        st.text(submitted)
+    elif "brief" in st.session_state:
+        st.caption("No brief submitted. Assets will be analyzed without one.")
 
     st.subheader("2. Asset")
     uploaded = st.file_uploader("Image or video (.mp4)", type=IMAGE_TYPES + config.VIDEO_TYPES,
@@ -107,6 +133,7 @@ with tab_analyze:
     if st.button("Analyze", type="primary", disabled=uploaded is None):
         # Drop the previous asset's result (and its alignment) so a failed or slow run can't leave it on screen.
         st.session_state.pop("result", None)
+        st.session_state.pop("report", None)
         st.session_state.pop("align_error", None)
         with st.status(f"Analyzing {uploaded.name}…", expanded=True) as status:
             try:
@@ -218,6 +245,27 @@ with tab_analyze:
             debug["frame_times"] = [t for t, _ in result.get("frames", [])]
             debug["observations"] = [asdict(o) for o in result["observations"]]
             st.code(json.dumps(debug, indent=2, ensure_ascii=False), language="json")
+
+        # ---- PDF report ----
+        st.divider()
+        sig = (result["filename"], mode, value, st.session_state.get("brief", ""),
+               st.session_state.get("product_desc", ""), id(result.get("alignment")))
+        st.button("Create PDF report", on_click=_on_make_report, args=(shown, sig))
+        if "report_error" in st.session_state:
+            st.error(st.session_state["report_error"])
+        report = st.session_state.get("report")
+        if report and report["sig"] == sig:
+            b64 = base64.b64encode(report["pdf"]).decode()
+            # A blob URL opened from a real click in this frame avoids the popup blocker.
+            components.html(f"""
+<button id="o" style="font:14px sans-serif;padding:.5rem 1rem;cursor:pointer">Open report in a new tab</button>
+<script>
+const bytes = Uint8Array.from(atob("{b64}"), c => c.charCodeAt(0));
+const url = URL.createObjectURL(new Blob([bytes], {{type: "application/pdf"}}));
+document.getElementById("o").onclick = () => window.open(url, "_blank");
+</script>""", height=50)
+        elif report:
+            st.caption("Settings changed since the report was created. Create it again to refresh.")
 
 # ---------------------------------------------------------------- How certainty works tab
 

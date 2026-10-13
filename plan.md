@@ -223,7 +223,7 @@ _Later: calibrate against a hand-labelled set and add a reliability chart._
 1. **Analyze** ✅
    - **1. Creative brief (optional)**
      - **Draft a brief from a product description** (expander): description → "Draft brief" → fills the brief box
-     - **Creative brief** text area; when filled, alignment runs on every file
+     - **Creative brief** text area plus a **Submit brief** button. Edits only take effect when submitted; the submitted brief is then printed below the box as read-only text so the user can confirm exactly what the next analysis will use. Drafting fills the box but does not submit.
    - **2. Asset**
      - Uploader: images (jpg, jpeg, png, webp, gif) and **`.mp4` video**; zip in Phase 5
      - Output limit: radio **Top N** (1–25) or **Certainty threshold** (0–100%)
@@ -233,6 +233,7 @@ _Later: calibrate against a hand-labelled set and add a reliability chart._
      - _(video)_ **Frames sent to Claude** grid with timestamps · **Speech transcript** with timestamps (or "No speech detected. Music and sound effects aren't analyzed yet.")
      - **Creative brief alignment:** overall metric, diverging chart, rationales, suggestions, brief used, re-evaluate button
      - expanders: Tag details · Merged variants · Raw data (debug)
+     - **Create PDF report** button at the bottom (§10). After it runs, an **Open report in a new tab** button opens the PDF in a separate browser tab, where it can be downloaded.
 2. **How certainty works** ✅ (§7)
 3. _(Phase 4)_ **History:** past runs (date, files, model, settings, tokens/cost). Reopen or delete.
 
@@ -262,7 +263,11 @@ Added for performance modelling (use 2):
 - **`content_hash`:** a fingerprint of the file, so re-uploads of the same creative are recognized even under a different name.
 - **`prompt_version`:** recorded with every run, together with the model. Features from different prompt or model versions shouldn't be mixed silently in a model.
 
-## 10. Export _(Phase 4, not yet built)_
+## 10. Export
+
+**PDF report ✅ (`core/report.py`)**, one run. Title "Content Analyzer Report". Sections in order: product description (if any) · creative brief used · asset filename · caption · tag certainty chart · alignment chart · explanations (one per dimension) · suggestions · tag table (the tags currently shown) · session cost, runs per asset (K) and model. Footer on every page: the GitHub URL (https://github.com/cesarbrea/content-analyzer) and cesar.brea@alixpartners.com. Built with reportlab; the charts are the app's Altair charts rendered to PNG with vl-convert. The PDF is opened from a blob URL on a user click (avoids popup blockers). It is built from the filter settings at the time of the click; changing them afterwards asks for a refresh.
+
+**Not yet built (Phase 4):**
 - **CSV (tags):** file, caption, tag, category, certainty, agreement, self-confidence, source, evidence.
 - **CSV (alignment):** file, dimension, score, rationale, plus overall score and suggestions.
 - **JSON:** full run: settings, brief, captions, transcripts, raw observations, merge mapping, categories, alignment.
@@ -387,6 +392,7 @@ content_analyzer/
 | 2026-10-01 | Chart fix: every bar label shown (no label hiding, 30 px rows, padded axes); charts moved to `charts.py`. Plan updated to match the build. First git commit; pushed to private repo github.com/cesarbrea/content-analyzer. |
 | 2026-10-05 | YouTube options discussed (§17). Phase 6 for `.mp4`: scene-based frame sampling, local transcription, video-aware prompts, frames/transcript display, ignore player chrome. Fixes: `truststore` for the corporate network, raw-audio input to faster-whisper, ffmpeg lookup. Measured video cost ≈ $0.12 with a brief. 18 tests. |
 | 2026-10-05 | Added the second use from the README, creative features for performance modelling: purpose (§1), data model fields (`asset_key`, `content_hash`, `prompt_version`, `vocabulary`), model-ready exports (§10), Phase 4b, risks, and §18. |
+| 2026-10-13 | Brief box now has a **Submit brief** button and a read-only echo of the submitted brief. **PDF report** (§10) opened in a new tab. New dependencies: reportlab, vl-convert-python. Also: Analyze clears the previous result so a prior asset's evaluation can't stay on screen. |
 
 ## 17. YouTube URLs (under discussion, not planned yet)
 

@@ -6,3 +6,5 @@ python-dotenv
 faster-whisper
 truststore
 pytest
+reportlab
+vl-convert-python
