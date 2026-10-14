@@ -64,6 +64,7 @@ _"Impact Foundry Image Analysis and Tagging for Creative Optimization in Adverti
 | 13 | **Story reading for video:** plot beats over time, characters, and story-vs-brief scores (§6.3a) |
 | 14 | **PDF report** of a run, opened in a new tab (§10) |
 | 15 | **Submit brief** button with a read-only echo of the submitted brief (§8) |
+| 16 | **Write tags to files** (optional, Phase 4c): XMP sidecars by default, or embedded XMP, so photo and video managers can search by keyword (§10a) |
 
 ### Out of scope for now
 Auth and multi-user, cloud hosting, job queues, rate limiting, billing, fixed or client taxonomies, brief upload (.docx/.pdf), configurable alignment dimensions, batch-level summary views.
@@ -307,6 +308,31 @@ Added for performance modelling (use 2):
 - **Feature matrix CSV (for modelling):** one row per asset (`asset_key`), one column per vocabulary feature, plus the four alignment dimensions, overall alignment, and asset metadata (kind, duration, model, prompt_version, run date). A feature is **0 when absent**; when present, the value is its **certainty** (0–1), with an option to export **binary** values (1 at or above a chosen certainty threshold) instead. **Every** feature is exported, not just the current Top N, so the columns are the same for every asset. Accompanied by a data dictionary (feature → category, variants, number of assets).
 - **Long-format CSV (for modelling):** `asset_key, feature, category, source, certainty, agreement, self_confidence`, for tools that prefer tidy data.
 
+### 10a. Write tags to files _(Phase 4c, not yet built)_
+
+**Goal:** let the user put the tags back onto the assets, so photo and video managers, DAM tools and OS search can find assets by keyword. The CSV/JSON exports above stay the source of truth, because they carry certainty, agreement and evidence, which file keywords can't hold.
+
+**Background (what the formats allow):**
+- **JPEG:** XMP (`dc:subject`) is the modern standard and is read by Adobe tools, Lightroom and most DAM systems. IPTC `Keywords` is older but widely read. EXIF has no real keyword field (Windows Explorer's "Tags" box uses the special `XPKeywords`).
+- **PNG / WebP:** can carry XMP, but fewer tools read it.
+- **MP4:** can carry an XMP block (Premiere, Bridge, ExifTool) and simple QuickTime/iTunes-style fields (keywords, comment, description), but support is inconsistent across players and DAM tools.
+- Many platforms (social networks, some video hosts) **strip metadata** on upload, so embedded tags may not survive.
+- A **sidecar** `.xmp` file (same name as the asset plus `.xmp`) is the standard non-destructive alternative, works for any file type including video, and is read by Lightroom, Bridge and many DAM tools.
+
+**Options offered to the user (a "Write tags" section in the Export area; off by default):**
+1. **Sidecar `.xmp` (default).** One file per asset next to the original. The original file is never touched. Recommended for videos.
+2. **Embed in the file (XMP).** Written with ExifTool. Recommended only for JPEGs (and PNG/WebP if wanted). The original is backed up first (`_original` copy, ExifTool's default behavior), and the user must confirm, since this changes the file's bytes. For `.mp4`, embedding is available but labelled as less reliably read.
+3. **Neither:** CSV/JSON export only.
+
+**What is written:** tag **names only** (`dc:subject`), filtered by a **certainty threshold** chosen by the user (default 70%), or the current Top N. Optionally also the caption (`dc:description`). Certainty and evidence are not written; they stay in the CSV/JSON. Optionally, tags can be written under a custom namespace with their certainty for tools that understand it (later).
+
+**Implementation notes:**
+- A new `core/tagwrite.py`: build the keyword list from stored scores, write a sidecar (plain XMP text, no extra library) or call **ExifTool** for embedding. ExifTool is an external program (like ffmpeg): check it is on PATH at use and show a clear message if missing; the sidecar option needs nothing installed.
+- Because embedding changes the file's bytes, **`content_hash` / `asset_key` must be computed from the original before any write** and stored (Phase 4), so the asset is still recognized afterward. Re-analyzing an already-tagged file must use the stored hash or hash only the pixels/frames, not the metadata.
+- Merge, don't overwrite: keep keywords the file already has; add ours; make re-writing idempotent (no duplicates), and mark ours so they can be removed again (e.g. a prefix or a separate field) if the user wants to undo.
+- Videos uploaded through the browser exist only as bytes in the session, not as files on disk. Writing tags to the user's original file therefore means **downloading** the sidecar or the tagged copy (a download button per asset, or a zip for a batch), not editing the file in place.
+- Tests: sidecar content is valid XMP with the expected keywords and threshold; re-writing is idempotent; no write without confirmation; ExifTool-missing path.
+
 ---
 
 ## 11. Project layout
@@ -364,6 +390,7 @@ content_analyzer/
 | 3 | Brief alignment (4 dimensions, −1…+1, suggestions, diverging chart) + **brief drafting helper** | Sailing-shirt description → drafted brief → image gives sensible scores and suggestions | ✅ 2026-09-30. Tested on a synthetic image and on a user photo of dinghy racers; still to do: test with the demo's Sunfish image |
 | 4 | SQLite persistence, History tab, CSV/JSON export, saved brief drafts; **`asset_key` / `content_hash` / `prompt_version`** stored from the start | Past run reopens identically; exports open in Excel | **Next** |
 | 4b | **Library vocabulary + model-ready export** (§18): cross-asset feature merge, editable vocabulary, feature-matrix and long-format CSVs with a data dictionary | Two assets with "sailboat" vs "sailing boat" land in the same column; the matrix loads cleanly into Python/R/Excel | After Phase 4 (needs saved results across assets) |
+| 4c | **Write tags to files** (§10a): XMP sidecar by default, optional embedding via ExifTool, certainty threshold, backup and confirmation | A tagged JPEG shows the keywords in Lightroom/Explorer; a video gets a sidecar `.xmp`; re-writing creates no duplicates; the stored hash is unchanged | After Phase 4 (needs stored hashes and results) |
 | 5 | Zip ingest (images) + emergent categories | Mixed zip with junk files handled cleanly; chart colored by category | |
 | 6b | **Story reading for video** (§6.3a): denser 0.75 s / 512 px frame set, beats, characters, story scores vs brief (shown separately from overall alignment), PDF section | Plot and characters read plausibly on a real ad; cost ≈ $0.05 per video; images never trigger it | ✅ 2026-10-13. Tested on one ad (Target Wellness) with a made-up brief; only the first part of the output was reviewed. More videos are needed to judge story-score quality |
 | 6 | Video visual tagging (ffmpeg frames) + speech via faster-whisper | Tags cite frame timestamps or quotes | ✅ 2026-10-05 for `.mp4` (done before Phases 4–5 at the user's request). Tested with screen-recorded ads. Speech tested only on a no-speech ad so far |
@@ -388,6 +415,7 @@ content_analyzer/
 - **Long videos:** the 10-frame tagging cap is sized for 15–60 s ads. Longer videos are sampled more sparsely, and transcription takes longer on CPU. The story reading's cap is 60 frames (45 s at 0.75 s spacing); beyond that its spacing widens, so short moments in long videos can be missed.
 - **Story reading is inference from samples.** It can't see between frames, hear music or effects, or reliably tell who is speaking (Whisper has no speaker labels). Characters are described by appearance and role, never identified from face or voice. Story scores are a single judgment, not calibrated; treat small differences as noise.
 - **PDF report depends on `vl-convert-python` and `reportlab`:** both install as plain wheels (no extra binaries). Report text is limited to Latin-1-style characters (others become "?").
+- **Writing tags into files changes them.** Embedding alters the file's bytes (so hashes must be taken first), may be stripped by platforms on upload, and for MP4 is read inconsistently. Hence sidecars are the default and embedding asks for confirmation and makes a backup (see 10a).
 - **Windows tooling note:** PowerShell 5.1's `Get-Content`/`Set-Content` reads and writes non-UTF-8 by default and garbled characters in `app.py` once. Edit source files with an editor, not PowerShell text replacement.
 
 ## 14. Later ideas (not v1)
@@ -423,6 +451,7 @@ content_analyzer/
 | PDF report | One run, fixed section order, opened in a new tab from a button, footer with the GitHub URL and contact email (2026-10-13) |
 | Story reading | Temporal analysis of video (plot beats, characters) in **one** call; story scores **shown separately** from overall alignment (2026-10-13) |
 | Story frame sampling | One frame per ~0.75 s (not a % of frames), scene-change frames included, cap 60, 512 px, used for the story call only (2026-10-13) |
+| Writing tags to files | Optional, off by default; **XMP sidecar** by default, optional embedding (JPEG recommended, MP4 less reliable); tag names only above a certainty threshold; CSV/JSON stay the source of truth (2026-10-14) |
 | Video support timing | Build `.mp4` support now, before Phase 4 (2026-10-05) |
 | YouTube videos | No direct URL support yet; options under discussion (§17). Meanwhile, screen-record with Snipping Tool and upload the `.mp4` (works) |
 
@@ -436,6 +465,8 @@ content_analyzer/
 | 2026-10-05 | Added the second use from the README, creative features for performance modelling: purpose (§1), data model fields (`asset_key`, `content_hash`, `prompt_version`, `vocabulary`), model-ready exports (§10), Phase 4b, risks, and §18. |
 | 2026-10-13 | **Story reading for video** (§8): plot beats over time, characters, and story-vs-brief scores in one call over ~0.75 s-spaced 512 px frames; scores shown separately from overall alignment. |
 | 2026-10-13 | Brief box now has a **Submit brief** button and a read-only echo of the submitted brief. **PDF report** (§10) opened in a new tab. New dependencies: reportlab, vl-convert-python. Also: Analyze clears the previous result so a prior asset's evaluation can't stay on screen. |
+
+| 2026-10-14 | Added **Write tags to files** (§10a, Phase 4c): what JPEG/MP4 allow, sidecar vs embedded options, threshold, hashing and backup rules. Also added `structure.md` / `structure.jpg` describing the components and libraries. |
 
 ## 17. YouTube URLs (under discussion, not planned yet)
 
