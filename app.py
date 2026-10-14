@@ -23,7 +23,8 @@ IMAGE_TYPES = ["jpg", "jpeg", "png", "webp", "gif"]
 st.set_page_config(page_title="Content Analyzer", layout="wide")
 st.title("Content Analyzer")
 st.markdown("This application describes and enhances tags for visual and audio content, and evaluates "
-            "this content for conformance with a creative brief on multiple dimensions.")
+            "this content for conformance with a creative brief on multiple dimensions. "
+            "Research shows that good creative has twice the impact on campaign outcomes versus other major factors such as reach and brand (Nielsen Catalina Solutions 2017 / Circana 2023).")
 
 
 # ---------------------------------------------------------------- callbacks (run before the page redraws)

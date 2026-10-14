@@ -249,7 +249,7 @@ _Later: calibrate against a hand-labelled set and add a reliability chart._
 
 ## 8. UI (Streamlit, one page with tabs)
 
-**Header:** "Content Analyzer", with the subtitle: _"This application describes and enhances tags for visual and audio content, and evaluates this content for conformance with a creative brief on multiple dimensions."_
+**Header:** "Content Analyzer", with the subtitle: _"This application describes and enhances tags for visual and audio content, and evaluates this content for conformance with a creative brief on multiple dimensions. Research shows that good creative has twice the impact on campaign outcomes versus other major factors such as reach and brand (Nielsen Catalina Solutions 2017 / Circana 2023)."_ (second sentence added 2026-10-14, wording supplied by the user)
 
 **Tabs:**
 1. **Analyze** ✅
