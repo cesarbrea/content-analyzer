@@ -33,16 +33,22 @@ def _chart_image(chart, max_width: float) -> Image:
     return img
 
 
-def _footer(canvas, doc):
+def _footer_line(org: str) -> str:
+    """Same wording as the deck's footer; the organization part is left out when none was submitted."""
+    parts = ([f"Creative Content Analysis for {org.strip()}"] if org.strip() else []) + [GITHUB_URL, CONTACT_EMAIL]
+    return "  |  ".join(parts).encode("cp1252", "replace").decode("cp1252")
+
+
+def _footer(canvas, doc, org: str = ""):
     canvas.saveState()
     canvas.setFont("Helvetica", 8)
     canvas.setFillColor(colors.grey)
-    canvas.drawString(doc.leftMargin, 0.5 * inch, f"{GITHUB_URL}  |  {CONTACT_EMAIL}")
+    canvas.drawString(doc.leftMargin, 0.5 * inch, _footer_line(org))
     canvas.drawRightString(letter[0] - doc.rightMargin, 0.5 * inch, f"Page {doc.page}")
     canvas.restoreState()
 
 
-def build_report(result: dict, shown: list[TagScore], product_desc: str, brief: str) -> bytes:
+def build_report(result: dict, shown: list[TagScore], product_desc: str, brief: str, org: str = "") -> bytes:
     """Sections, in order: product description, brief, filename, caption, tag chart, alignment chart,
     explanations, suggestions, tag table, session cost / runs / model. `shown` is the tag list currently
     on screen; `brief` is the one used for the evaluation (falls back to the current brief)."""
@@ -52,14 +58,17 @@ def build_report(result: dict, shown: list[TagScore], product_desc: str, brief: 
     h2 = ParagraphStyle("h2", parent=ss["Heading2"], spaceBefore=14, spaceAfter=4)
 
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=letter, title="Content Analyzer Report",
+    doc = SimpleDocTemplate(buf, pagesize=letter, title="Creative Content Analyzer Report",
                             author=CONTACT_EMAIL, leftMargin=0.8 * inch, rightMargin=0.8 * inch,
                             topMargin=0.8 * inch, bottomMargin=0.9 * inch)
     width = doc.width
     alignment = result.get("alignment")
     brief_used = alignment["brief"] if alignment else brief
 
-    story = [Paragraph("Content Analyzer Report", ss["Title"])]
+    story = [Paragraph("Creative Content Analyzer Report", ss["Title"])]
+    if org.strip():
+        sub = ParagraphStyle("sub", parent=ss["Heading2"], alignment=1, textColor=colors.HexColor("#1F3A5F"))
+        story.append(Paragraph(_t(org.strip()), sub))
 
     def section(title, text):
         story.append(Paragraph(title, h2))
@@ -128,5 +137,6 @@ def build_report(result: dict, shown: list[TagScore], product_desc: str, brief: 
         f"Cost: ${result['cost_usd']:.4f}<br/>Runs per asset (K): {result['k']}<br/>"
         f"Model: {_t(result['model'])}", body))
 
-    doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
+    draw_footer = lambda canvas, d: _footer(canvas, d, org)
+    doc.build(story, onFirstPage=draw_footer, onLaterPages=draw_footer)
     return buf.getvalue()

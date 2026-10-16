@@ -1,4 +1,4 @@
-# Content Analyzer: structure
+# Creative Content Analyzer: structure
 
 How the app is put together: every component file, every library it uses, and how they combine to produce each output.
 The diagram is in [`structure.jpg`](structure.jpg). For design decisions and the build plan, see [`plan.md`](plan.md).
@@ -11,7 +11,7 @@ The diagram is in [`structure.jpg`](structure.jpg). For design decisions and the
 
 | File | What it does |
 |---|---|
-| `app.py` | The Streamlit page, and the only file you run (`streamlit run app.py`). Draws the sidebar (model, K slider, cost estimate), the **Analyze** tab (brief box with Submit button, uploader, output limit, results, story, brief alignment, PDF button) and the **How certainty works** tab. Holds the callbacks (draft brief, submit brief, re-evaluate, create PDF) and keeps the current result in `st.session_state`. Changing Top N or the threshold only re-filters the stored result; it makes no API call. |
+| `app.py` | The Streamlit page, and the only file you run (`streamlit run app.py`). Draws the sidebar (model, K slider, cost estimate), the **Analyze** tab (organization box with Submit button, brief box with Submit button, uploader, output limit, results, story, brief alignment, PDF button) and the **How certainty works** tab. Holds the callbacks (draft brief, submit brief, re-evaluate, create PDF) and keeps the current result in `st.session_state`. Changing Top N or the threshold only re-filters the stored result; it makes no API call. |
 | `certainty_help.py` | Content of the **How certainty works** tab. Reads the live weights and rubric from `core/config.py`, `core/scoring.py` and `core/tagger.py`, so the text and worked examples always match the code. |
 | `charts.py` | Builds the two Altair bar charts: tag certainty (`tag_chart`) and alignment on a −1…+1 scale (`alignment_chart`, also used for the story scores). Used by both `app.py` and `core/report.py`. |
 
@@ -30,6 +30,7 @@ The diagram is in [`structure.jpg`](structure.jpg). For design decisions and the
 | `core/images.py` | Fixes EXIF orientation, converts to RGB, shrinks the long edge, returns a JPEG. Used for uploaded images and for video frames. |
 | `core/video.py` | Everything that needs ffmpeg: finds the binaries, probes duration and audio, detects scene changes, picks frame times (`pick_timestamps`, used with two parameter sets), extracts frames and audio, formats timestamps. |
 | `core/audio.py` | Local speech-to-text. Loads the Whisper model once, reads the 16 kHz WAV and returns timestamped segments. No audio leaves the laptop. |
+| `core/deck.py` | Builds the PowerPoint (.pptx) report with python-pptx: a simple white design with native, editable charts, a cover, a contents page with page numbers, and a footer with page numbers, the GitHub URL and the contact email. Sections are included only when they apply (brief, alignment and story pages are skipped when there is no brief or no video), and long text is split over continuation slides. Video story points and characters get thumbnails taken from the frame nearest in time. |
 | `core/report.py` | Builds the PDF report with reportlab. Renders the app's own Altair charts to PNG and lays out the sections in the required order, with the footer (GitHub URL and contact email). |
 | `core/__init__.py` | Empty; makes `core` a package. |
 
@@ -41,6 +42,7 @@ The diagram is in [`structure.jpg`](structure.jpg). For design decisions and the
 | `scripts/try_image.py` | Runs the image pipeline from the terminal without the UI; `--make-sample` writes the test image. |
 | `tests/test_scoring.py` | Scoring, filtering and tag normalization. |
 | `tests/test_video.py` | Frame picking, content blocks, and ffmpeg on a generated clip. |
+| `tests/test_deck.py` | PowerPoint sections and order, conditional pages, two-chart split, long-brief paging, text-fit helpers. |
 | `tests/test_narrative.py` | Story with and without a brief, score clamping, story frame density and cap, refusing images. |
 | `tests/test_app.py` | The UI renders (Streamlit `AppTest`), re-filtering, alignment, help tab and video results. |
 | `tests/assets/sample_sailboat.png` | Synthetic image used by the tests. |
@@ -58,8 +60,9 @@ The diagram is in [`structure.jpg`](structure.jpg). For design decisions and the
 | **pydantic** | `core/tagger.py`, `core/merge.py`, `core/brief.py`, `core/narrative.py` | Schemas that Claude's structured output is validated against. |
 | **altair** | `charts.py` | Charts (Vega-Lite). Installed with Streamlit. |
 | **pandas** | `app.py`, `charts.py` | Tables and chart data. Installed with Streamlit. |
-| **pillow** | `core/images.py` | Image resizing and JPEG encoding. |
+| **pillow** | `core/images.py`, `core/deck.py` | Image resizing and JPEG encoding; thumbnail sizing in the deck. |
 | **reportlab** | `core/report.py` | PDF layout, tables and footer. |
+| **python-pptx** | `core/deck.py` | PowerPoint slides, native charts, text and pictures. |
 | **vl-convert-python** | `core/report.py` | Renders the Altair charts to PNG for the PDF, with no browser needed. |
 | **faster-whisper** | `core/audio.py` | Local speech recognition (CPU, `base` model, downloaded once). |
 | **truststore** | `core/audio.py` | Lets Python trust the Windows certificate store, so the model download works on a network that inspects HTTPS. Verification stays on. |
@@ -100,8 +103,13 @@ Steps 1–7 above apply, with these differences:
 - `core/report.py` renders `charts.py`'s charts to PNG with vl-convert and lays out, in order: title, product description, brief used, filename, caption, tag chart, alignment chart, explanations, suggestions, tag table, story (videos), then cost, runs and model, with the footer on every page.
 - `app.py` embeds the PDF in a small HTML button; clicking it opens the PDF in a new browser tab from a blob URL, where it can be downloaded.
 
-### E. Costs and logs
+### E. The PowerPoint report
+- **Create PowerPoint report** in `app.py` calls `core/deck.build_deck` with the same inputs as the PDF (stored result, tags currently shown, product description, brief). It makes no API calls.
+- `core/deck.py` builds, in order: cover (title, organization name, date), contents (with page numbers), product description, creative brief (one slide, a rounded box per element), asset evaluated (thumbnail, filename, caption), tags detected (native bar chart, split into two charts when there are more than 12 tags), alignment summary (overall score and a native chart of the four dimensions), alignment evaluation and suggestions, story alignment summary (mean and chart of the four story scores), story detected (beats and characters with thumbnails, then arc and limits; videos only), story evaluation and suggestions (videos with a brief), and usage (model, runs, tokens, cost).
+- `app.py` then shows a **Download PowerPoint (.pptx)** button. The submitted organization name becomes the cover subtitle and part of the footer in both the PDF and the PowerPoint. Unlike the PDF it can't open in a browser tab, so it downloads.
+
+### F. Costs and logs
 Every Claude call passes through `core/llm.py`. It counts tokens, `core/analyze.py` adds them up per asset, and `core/config.cost_usd` converts them to dollars using the price table. The sidebar estimate comes from the `EST_COST_*` values in `config.py`. Each call is also written to `data/logs/`.
 
-### F. What stays on the laptop
+### G. What stays on the laptop
 Audio, the Whisper model, frame extraction and all scoring arithmetic run locally. Images, video frames, the transcript text and the brief are sent to the Anthropic API.

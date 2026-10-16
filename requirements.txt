@@ -8,3 +8,5 @@ truststore
 pytest
 reportlab
 vl-convert-python
+python-pptx
+pypdf

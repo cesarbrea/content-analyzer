@@ -1,4 +1,4 @@
-"""Content Analyzer. Run with: streamlit run app.py"""
+"""Creative Content Analyzer. Run with: streamlit run app.py"""
 import base64
 import json
 from dataclasses import asdict
@@ -12,6 +12,7 @@ from charts import alignment_chart, tag_chart
 from core import config
 from core.analyze import analyze_asset, blocks_for
 from core.brief import draft_brief, evaluate_alignment
+from core.deck import build_deck
 from core.llm import ClaudeCallError
 from core.narrative import NARRATIVE_DIMENSIONS, read_story
 from core.report import build_report
@@ -20,8 +21,8 @@ from core.video import fmt_time
 
 IMAGE_TYPES = ["jpg", "jpeg", "png", "webp", "gif"]
 
-st.set_page_config(page_title="Content Analyzer", layout="wide")
-st.title("Content Analyzer")
+st.set_page_config(page_title="Creative Content Analyzer", layout="wide")
+st.title("Creative Content Analyzer")
 st.markdown("This application describes and enhances tags for visual and audio content, and evaluates "
             "this content for conformance with a creative brief on multiple dimensions. "
             "Research shows that good creative has twice the impact on campaign outcomes versus other major factors such as reach and brand (Nielsen Catalina Solutions 2017 / Circana 2023).")
@@ -30,6 +31,11 @@ st.markdown("This application describes and enhances tags for visual and audio c
 # ---------------------------------------------------------------- callbacks (run before the page redraws)
 
 def _on_draft():
+    """Button callback: only flags the request. The call itself runs in the page body, under a spinner."""
+    st.session_state["draft_requested"] = True
+
+
+def _run_draft():
     st.session_state.pop("draft_error", None)
     desc = st.session_state.get("product_desc", "").strip()
     if not desc:
@@ -48,15 +54,32 @@ def _on_submit_brief():
     st.session_state["brief"] = st.session_state.get("brief_input", "")
 
 
+def _on_submit_org():
+    st.session_state["org"] = st.session_state.get("org_input", "").strip()
+
+
 def _on_make_report(shown, sig):
     r = st.session_state["result"]
     try:
-        pdf = build_report(r, shown, st.session_state.get("product_desc", ""), st.session_state.get("brief", ""))
+        pdf = build_report(r, shown, st.session_state.get("product_desc", ""), st.session_state.get("brief", ""),
+                           st.session_state.get("org", ""))
     except Exception as e:
         st.session_state["report_error"] = f"Report failed: {type(e).__name__}: {e}"
         return
     st.session_state.pop("report_error", None)
     st.session_state["report"] = {"pdf": pdf, "sig": sig}
+
+
+def _on_make_deck(shown, sig):
+    r = st.session_state["result"]
+    try:
+        pptx = build_deck(r, shown, st.session_state.get("product_desc", ""), st.session_state.get("brief", ""),
+                         st.session_state.get("org", ""))
+    except Exception as e:
+        st.session_state["deck_error"] = f"PowerPoint failed: {type(e).__name__}: {e}"
+        return
+    st.session_state.pop("deck_error", None)
+    st.session_state["deck"] = {"pptx": pptx, "sig": sig}
 
 
 def _on_reevaluate():
@@ -104,12 +127,21 @@ tab_analyze, tab_help = st.tabs(["Analyze", "How certainty works"])
 
 with tab_analyze:
     st.subheader("1. Creative brief (optional)")
+    st.text_input("Organization this analysis is for", key="org_input", placeholder="e.g. Acme Marine Apparel",
+                  help="Shown as the subtitle on the cover of the PDF and PowerPoint reports, and in their footers.")
+    st.button("Submit organization", on_click=_on_submit_org)
+    if st.session_state.get("org"):
+        st.caption(f"Submitted organization: {st.session_state['org']}")
     with st.expander("Draft a brief from a product description"):
         st.text_area("Product description", key="product_desc", height=120,
                      placeholder="e.g. A line of shirts for middle-aged and elderly sailors, using a fabric that "
                                  "vents heat and moisture midday and insulates as temperatures drop. "
                                  "Priced like Patagonia.")
         st.button("Draft brief", on_click=_on_draft)
+        if st.session_state.pop("draft_requested", False):
+            # Runs before the brief box below is created, so the draft can be placed in it.
+            with st.spinner("Drafting the brief (usually 15-25 seconds)..."):
+                _run_draft()
         if "draft_error" in st.session_state:
             st.error(st.session_state["draft_error"])
         elif "draft_note" in st.session_state:
@@ -145,6 +177,7 @@ with tab_analyze:
         # Drop the previous asset's result (and its alignment) so a failed or slow run can't leave it on screen.
         st.session_state.pop("result", None)
         st.session_state.pop("report", None)
+        st.session_state.pop("deck", None)
         st.session_state.pop("align_error", None)
         with st.status(f"Analyzing {uploaded.name}…", expanded=True) as status:
             try:
@@ -293,13 +326,23 @@ with tab_analyze:
             debug["observations"] = [asdict(o) for o in result["observations"]]
             st.code(json.dumps(debug, indent=2, ensure_ascii=False), language="json")
 
-        # ---- PDF report ----
+        # ---- Reports ----
         st.divider()
         sig = (result["filename"], mode, value, st.session_state.get("brief", ""),
-               st.session_state.get("product_desc", ""), id(result.get("alignment")))
-        st.button("Create PDF report", on_click=_on_make_report, args=(shown, sig))
-        if "report_error" in st.session_state:
-            st.error(st.session_state["report_error"])
+               st.session_state.get("product_desc", ""), st.session_state.get("org", ""), id(result.get("alignment")))
+        b1, b2, _ = st.columns([1, 1, 3])
+        b1.button("Create PDF report", on_click=_on_make_report, args=(shown, sig))
+        b2.button("Create PowerPoint report", on_click=_on_make_deck, args=(shown, sig))
+        for err in ("report_error", "deck_error"):
+            if err in st.session_state:
+                st.error(st.session_state[err])
+        deck = st.session_state.get("deck")
+        if deck and deck["sig"] == sig:
+            st.download_button("Download PowerPoint (.pptx)", deck["pptx"],
+                               file_name="creative_content_analyzer_report.pptx",
+                               mime="application/vnd.openxmlformats-officedocument.presentationml.presentation")
+        elif deck:
+            st.caption("Settings changed since the PowerPoint was created. Create it again to refresh.")
         report = st.session_state.get("report")
         if report and report["sig"] == sig:
             b64 = base64.b64encode(report["pdf"]).decode()

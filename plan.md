@@ -1,4 +1,4 @@
-# Content Analyzer — Build Plan
+# Creative Content Analyzer — Build Plan
 
 _Plan written 2026-09-29 from the planning conversation and the Loom walkthrough of the earlier variant. Last updated 2026-10-05._
 
@@ -64,6 +64,7 @@ _"Impact Foundry Image Analysis and Tagging for Creative Optimization in Adverti
 | 13 | **Story reading for video:** plot beats over time, characters, and story-vs-brief scores (§6.3a) |
 | 14 | **PDF report** of a run, opened in a new tab (§10) |
 | 15 | **Submit brief** button with a read-only echo of the submitted brief (§8) |
+| 17 | **PowerPoint (.pptx) report** of a run, minimalist design, native charts (§10b) |
 | 16 | **Write tags to files** (optional, Phase 4c): XMP sidecars by default, or embedded XMP, so photo and video managers can search by keyword (§10a) |
 
 ### Out of scope for now
@@ -249,11 +250,12 @@ _Later: calibrate against a hand-labelled set and add a reliability chart._
 
 ## 8. UI (Streamlit, one page with tabs)
 
-**Header:** "Content Analyzer", with the subtitle: _"This application describes and enhances tags for visual and audio content, and evaluates this content for conformance with a creative brief on multiple dimensions. Research shows that good creative has twice the impact on campaign outcomes versus other major factors such as reach and brand (Nielsen Catalina Solutions 2017 / Circana 2023)."_ (second sentence added 2026-10-14, wording supplied by the user)
+**Header:** "Creative Content Analyzer" (renamed from "Content Analyzer" on 2026-10-15; also the page title and the report titles), with the subtitle: _"This application describes and enhances tags for visual and audio content, and evaluates this content for conformance with a creative brief on multiple dimensions. Research shows that good creative has twice the impact on campaign outcomes versus other major factors such as reach and brand (Nielsen Catalina Solutions 2017 / Circana 2023)."_ (second sentence added 2026-10-14, wording supplied by the user)
 
 **Tabs:**
 1. **Analyze** ✅
    - **1. Creative brief (optional)**
+     - **Organization** text box with a **Submit organization** button (2026-10-15). The submitted name is the subtitle on the cover of the PDF and the PowerPoint, and appears in both footers as "Creative Content Analysis for <organization>". Left out when empty.
      - **Draft a brief from a product description** (expander): description → "Draft brief" → fills the brief box
      - **Creative brief** text area plus a **Submit brief** button. Edits only take effect when submitted; the submitted brief is then printed below the box as read-only text so the user can confirm exactly what the next analysis will use. Drafting fills the box but does not submit.
    - **2. Asset**
@@ -298,7 +300,7 @@ Added for performance modelling (use 2):
 
 ## 10. Export
 
-**PDF report ✅ (`core/report.py`)**, one run. Title "Content Analyzer Report". Sections in order: product description (if any) · creative brief used · asset filename · caption · tag certainty chart · alignment chart · explanations (one per dimension) · suggestions · tag table (the tags currently shown) · session cost, runs per asset (K) and model. Footer on every page: the GitHub URL (https://github.com/cesarbrea/content-analyzer) and cesar.brea@alixpartners.com. Built with reportlab; the charts are the app's Altair charts rendered to PNG with vl-convert. The PDF is opened from a blob URL on a user click (avoids popup blockers). It is built from the filter settings at the time of the click; changing them afterwards asks for a refresh.
+**PDF report ✅ (`core/report.py`)**, one run. Title "Creative Content Analyzer Report". Sections in order: product description (if any) · creative brief used · asset filename · caption · tag certainty chart · alignment chart · explanations (one per dimension) · suggestions · tag table (the tags currently shown) · session cost, runs per asset (K) and model. Footer on every page: "Creative Content Analysis for <organization>" (when an organization was submitted), the GitHub URL (https://github.com/cesarbrea/content-analyzer) and cesar.brea@alixpartners.com. The organization is also shown as a subtitle under the title. Built with reportlab; the charts are the app's Altair charts rendered to PNG with vl-convert. The PDF is opened from a blob URL on a user click (avoids popup blockers). It is built from the filter settings at the time of the click; changing them afterwards asks for a refresh.
 
 **Not yet built (Phase 4):**
 - **CSV (tags):** file, caption, tag, category, certainty, agreement, self-confidence, source, evidence.
@@ -307,6 +309,29 @@ Added for performance modelling (use 2):
 - Export either the current filtered view or everything.
 - **Feature matrix CSV (for modelling):** one row per asset (`asset_key`), one column per vocabulary feature, plus the four alignment dimensions, overall alignment, and asset metadata (kind, duration, model, prompt_version, run date). A feature is **0 when absent**; when present, the value is its **certainty** (0–1), with an option to export **binary** values (1 at or above a chosen certainty threshold) instead. **Every** feature is exported, not just the current Top N, so the columns are the same for every asset. Accompanied by a data dictionary (feature → category, variants, number of assets).
 - **Long-format CSV (for modelling):** `asset_key, feature, category, source, certainty, agreement, self_confidence`, for tools that prefer tidy data.
+
+### 10b. PowerPoint report ✅ 2026-10-15 (`core/deck.py`)
+A `.pptx` of one run, built with python-pptx at the click of **Create PowerPoint report**, then **Download PowerPoint (.pptx)**. No API calls. `.pptx` rather than the legacy `.ppt`.
+
+**Design:** simple and minimalist for now: white background, dark text, one navy accent, Calibri, a short accent rule under each title, 16:9. Charts are **native PowerPoint charts** (editable), not pictures. **The AlixPartners template is deferred** (a later step: open the template file and fill its layouts instead of the blank deck). Footer on every slide except the cover: "Creative Content Analysis for <organization>" (when submitted), the GitHub URL and cesar.brea@alixpartners.com, plus a live page number.
+
+**Slides, in order** (a section is skipped when it doesn't apply):
+1. **Cover:** "Creative Content Analyzer Report"; **subtitle = the submitted organization name**, then the date.
+2. **Contents:** only the sections present, with page numbers.
+3. **Product description** (if one was entered; after the contents, before the brief): the text, continued on further slides if long.
+4. **Creative brief** (if a brief): **always one slide.** The brief is split into its elements (Objective, Target audience, ...); each is a rounded box with its label above and one bullet per sentence, in a grid (up to 4 across, 2 rows for up to 8 elements, 3 rows beyond that). One font size is chosen so the fullest box fits. A brief without "Label:" headings is shown as a single box. Limit: with more than about 10 elements of heavy text, the smallest size (8 pt) may overflow.
+5. **Asset evaluated:** thumbnail, filename, caption (videos also show duration and size).
+6. **Tags detected:** bar chart of certainty; **two charts side by side when there are more than 12 tags**.
+7. **Creative brief alignment summary** (if a brief): overall score and the four-dimension chart (green/red).
+8. **Creative brief alignment: evaluation and suggestions:** rationales on the left, suggestions on the right.
+9. **Story alignment summary** (videos with a brief): the overall story alignment (mean of the four story scores, labelled as separate from the overall brief alignment) and a chart of plot, characters, structure and product timing.
+10. **Story detected** (videos): logline and the timeline of beats, each with the sampled frame nearest its midpoint as a thumbnail (6 per slide); then characters with the frame nearest where each is first seen; then the arc and what could not be determined.
+11. **Story evaluation and suggestions** (videos with a brief).
+12. **Usage:** model, runs per asset (K), tokens, cost.
+
+**Layout rules:** PowerPoint doesn't wrap or shrink text, so text size is chosen from an estimate of how much fits (18 down to 10 pt); long text is split across continuation slides. Checked by exporting the slides to images through PowerPoint on synthetic data; a real run has not been reviewed yet.
+
+---
 
 ### 10a. Write tags to files _(Phase 4c, not yet built)_
 
@@ -355,6 +380,7 @@ content_analyzer/
     analyze.py              ✅ analyze_asset: prep (image/video) -> K runs (+ story for video) -> merge -> score -> alignment
     narrative.py            ✅ story reading for video: beats, characters, story-vs-brief scores (§6.3a)
     report.py               ✅ PDF report (reportlab; charts rendered with vl-convert)
+    deck.py                 ✅ PowerPoint report (python-pptx; native charts) (§10b)
     video.py                ✅ find ffmpeg, probe, scene changes, pick_timestamps, frames, audio
     audio.py                ✅ faster-whisper transcription (optional AST sound events in Phase 7)
     ingest.py                  upload/zip handling (Phase 5)
@@ -367,6 +393,7 @@ content_analyzer/
     test_scoring.py         ✅ scoring, filtering, normalize
     test_app.py             ✅ UI renders (AppTest), re-filtering, alignment, help tab, video results; no API calls
     test_video.py           ✅ frame picking, media blocks, ffmpeg on a generated 4 s clip; no API calls
+    test_deck.py            ✅ deck sections/order, conditional pages, two-chart split, long-brief paging; no API calls
     test_narrative.py       ✅ story with/without brief, score clamping, story frame density and cap, refuses images; no API calls
     assets/sample_sailboat.png ✅ synthetic test image
   data/                     gitignored: logs (db, assets from Phase 4)
@@ -390,6 +417,7 @@ content_analyzer/
 | 3 | Brief alignment (4 dimensions, −1…+1, suggestions, diverging chart) + **brief drafting helper** | Sailing-shirt description → drafted brief → image gives sensible scores and suggestions | ✅ 2026-09-30. Tested on a synthetic image and on a user photo of dinghy racers; still to do: test with the demo's Sunfish image |
 | 4 | SQLite persistence, History tab, CSV/JSON export, saved brief drafts; **`asset_key` / `content_hash` / `prompt_version`** stored from the start | Past run reopens identically; exports open in Excel | **Next** |
 | 4b | **Library vocabulary + model-ready export** (§18): cross-asset feature merge, editable vocabulary, feature-matrix and long-format CSVs with a data dictionary | Two assets with "sailboat" vs "sailing boat" land in the same column; the matrix loads cleanly into Python/R/Excel | After Phase 4 (needs saved results across assets) |
+| 6c | **PowerPoint report** (§10b): cover, contents, brief, asset, tags, alignment, story, usage; native charts; simple design (AlixPartners template deferred) | Deck opens in PowerPoint with no overflow on the test cases; sections skipped when not applicable | ✅ 2026-10-15. Checked by exporting slides to images with PowerPoint on synthetic data; not yet reviewed on a real run |
 | 4c | **Write tags to files** (§10a): XMP sidecar by default, optional embedding via ExifTool, certainty threshold, backup and confirmation | A tagged JPEG shows the keywords in Lightroom/Explorer; a video gets a sidecar `.xmp`; re-writing creates no duplicates; the stored hash is unchanged | After Phase 4 (needs stored hashes and results) |
 | 5 | Zip ingest (images) + emergent categories | Mixed zip with junk files handled cleanly; chart colored by category | |
 | 6b | **Story reading for video** (§6.3a): denser 0.75 s / 512 px frame set, beats, characters, story scores vs brief (shown separately from overall alignment), PDF section | Plot and characters read plausibly on a real ad; cost ≈ $0.05 per video; images never trigger it | ✅ 2026-10-13. Tested on one ad (Target Wellness) with a made-up brief; only the first part of the output was reviewed. More videos are needed to judge story-score quality |
@@ -451,6 +479,10 @@ content_analyzer/
 | PDF report | One run, fixed section order, opened in a new tab from a button, footer with the GitHub URL and contact email (2026-10-13) |
 | Story reading | Temporal analysis of video (plot beats, characters) in **one** call; story scores **shown separately** from overall alignment (2026-10-13) |
 | Story frame sampling | One frame per ~0.75 s (not a % of frames), scene-change frames included, cap 60, 512 px, used for the story call only (2026-10-13) |
+| PowerPoint report | `.pptx` (not `.ppt`); simple white minimalist design for now, **AlixPartners template deferred**; native editable charts; downloaded rather than opened in a tab (2026-10-15) |
+| Organization name | Submitted in the app; cover subtitle plus "Creative Content Analysis for <organization>" in both footers; omitted when empty (2026-10-15) |
+| Story alignment summary slide | Added to the deck; its overall is the mean of the four story scores, shown separately from the brief alignment overall (2026-10-15) |
+| App name | Renamed **Creative Content Analyzer** on the page, the PDF and the PowerPoint (2026-10-15) |
 | Writing tags to files | Optional, off by default; **XMP sidecar** by default, optional embedding (JPEG recommended, MP4 less reliable); tag names only above a certainty threshold; CSV/JSON stay the source of truth (2026-10-14) |
 | Video support timing | Build `.mp4` support now, before Phase 4 (2026-10-05) |
 | YouTube videos | No direct URL support yet; options under discussion (§17). Meanwhile, screen-record with Snipping Tool and upload the `.mp4` (works) |
@@ -467,6 +499,12 @@ content_analyzer/
 | 2026-10-13 | Brief box now has a **Submit brief** button and a read-only echo of the submitted brief. **PDF report** (§10) opened in a new tab. New dependencies: reportlab, vl-convert-python. Also: Analyze clears the previous result so a prior asset's evaluation can't stay on screen. |
 
 | 2026-10-14 | Added **Write tags to files** (§10a, Phase 4c): what JPEG/MP4 allow, sidecar vs embedded options, threshold, hashing and backup rules. Also added `structure.md` / `structure.jpg` describing the components and libraries. |
+
+| 2026-10-15 | App renamed **Creative Content Analyzer**. Added the **PowerPoint report** (§10b, `core/deck.py`, python-pptx) with a download button next to the PDF button; 6 new tests. YouTube URL support discussed and left for now (§17). |
+
+| 2026-10-15 | PowerPoint: product description moved from the cover to its own slide after the contents. Organization name field (submit button) used as the cover subtitle and in the footer of the PDF and PowerPoint. PowerPoint: new **Story alignment summary** slide before **Story detected**. 4 new tests. |
+
+| 2026-10-15 | PowerPoint **creative brief slide** is now always a single slide of rounded boxes, one per brief element, label above, one bullet per sentence. |
 
 ## 17. YouTube URLs (under discussion, not planned yet)
 
