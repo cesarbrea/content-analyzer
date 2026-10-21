@@ -126,12 +126,13 @@ tab_analyze, tab_help = st.tabs(["Analyze", "How certainty works"])
 # ---------------------------------------------------------------- Analyze tab
 
 with tab_analyze:
-    st.subheader("1. Creative brief (optional)")
     st.text_input("Organization this analysis is for", key="org_input", placeholder="e.g. Acme Marine Apparel",
                   help="Shown as the subtitle on the cover of the PDF and PowerPoint reports, and in their footers.")
     st.button("Submit organization", on_click=_on_submit_org)
     if st.session_state.get("org"):
         st.caption(f"Submitted organization: {st.session_state['org']}")
+
+    st.subheader("1. Creative brief (optional)")
     with st.expander("Draft a brief from a product description"):
         st.text_area("Product description", key="product_desc", height=120,
                      placeholder="e.g. A line of shirts for middle-aged and elderly sailors, using a fabric that "

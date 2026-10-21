@@ -254,8 +254,8 @@ _Later: calibrate against a hand-labelled set and add a reliability chart._
 
 **Tabs:**
 1. **Analyze** ✅
+   - **Organization** text box with a **Submit organization** button, above the numbered sections (2026-10-15; moved above the brief section 2026-10-21). The submitted name is the subtitle on the cover of the PDF and the PowerPoint, and appears in both footers as "Creative Content Analysis for <organization>". Left out when empty.
    - **1. Creative brief (optional)**
-     - **Organization** text box with a **Submit organization** button (2026-10-15). The submitted name is the subtitle on the cover of the PDF and the PowerPoint, and appears in both footers as "Creative Content Analysis for <organization>". Left out when empty.
      - **Draft a brief from a product description** (expander): description → "Draft brief" → fills the brief box
      - **Creative brief** text area plus a **Submit brief** button. Edits only take effect when submitted; the submitted brief is then printed below the box as read-only text so the user can confirm exactly what the next analysis will use. Drafting fills the box but does not submit.
    - **2. Asset**
