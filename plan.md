@@ -319,7 +319,7 @@ A `.pptx` of one run, built with python-pptx at the click of **Create PowerPoint
 1. **Cover:** "Creative Content Analyzer Report"; **subtitle = the submitted organization name**, then the date.
 2. **Contents:** only the sections present, with page numbers.
 3. **Product description** (if one was entered; after the contents, before the brief): the text, continued on further slides if long.
-4. **Creative brief** (if a brief): **always one slide.** The brief is split into its elements (Objective, Target audience, ...); each is a rounded box with its label above and one bullet per sentence, in a grid (up to 4 across, 2 rows for up to 8 elements, 3 rows beyond that). One font size is chosen so the fullest box fits. A brief without "Label:" headings is shown as a single box. Limit: with more than about 10 elements of heavy text, the smallest size (8 pt) may overflow.
+4. **Creative brief** (if a brief): **two slides for four or more elements** (2026-10-22). The brief is split into its elements (Objective, Target audience, ...); each is a rounded box with its label above and one bullet per sentence, up to 4 across. The **top row is on the first slide and the bottom row on a second slide titled "Creative brief (continued)"** (3 or fewer elements stay on one slide; beyond 8 elements the rows are split as evenly as possible over the two slides). One font size (up to 18 pt) is chosen so the fullest box fits, the same on both slides. A brief without "Label:" headings is shown as a single box. Limit: a very long brief may still overflow at the smallest size (8 pt).
 5. **Asset evaluated:** thumbnail, filename, caption (videos also show duration and size).
 6. **Tags detected:** bar chart of certainty; **two charts side by side when there are more than 12 tags**.
 7. **Creative brief alignment summary** (if a brief): overall score and the four-dimension chart (green/red).
@@ -505,6 +505,8 @@ content_analyzer/
 | 2026-10-15 | PowerPoint: product description moved from the cover to its own slide after the contents. Organization name field (submit button) used as the cover subtitle and in the footer of the PDF and PowerPoint. PowerPoint: new **Story alignment summary** slide before **Story detected**. 4 new tests. |
 
 | 2026-10-15 | PowerPoint **creative brief slide** is now always a single slide of rounded boxes, one per brief element, label above, one bullet per sentence. |
+
+| 2026-10-22 | PowerPoint creative brief: the top row of boxes is on the first slide and the bottom row on a second ("Creative brief (continued)"), with larger text. |
 
 ## 17. YouTube URLs (under discussion, not planned yet)
 

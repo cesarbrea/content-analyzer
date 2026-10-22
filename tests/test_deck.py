@@ -75,22 +75,50 @@ def test_story_without_brief_has_no_story_evaluation():
     assert "Creative brief" not in titles
 
 
-def test_long_brief_stays_on_one_slide_as_boxes():
+def _brief_boxes(slide):
+    return [sh for sh in slide.shapes if sh.shape_type == 1 and sh.has_text_frame and sh.text_frame.text]
+
+
+def test_eight_element_brief_is_two_slides_top_row_then_bottom_row():
     r = _result(False, True)
     r["alignment"]["brief"] = "\n".join(f"Section {i}:\n" + "A sentence about the audience and tone of the campaign. " * 6
                                         for i in range(8))
     titles, prs = _titles(build_deck(r, _tags(5), "", ""))
-    assert titles.count("Creative brief") == 1 and "Creative brief (continued)" not in titles
-    slide = prs.slides[titles.index("Creative brief")]
-    boxes = [sh for sh in slide.shapes if sh.shape_type == 1 and sh.has_text_frame and sh.text_frame.text]
-    assert len(boxes) == 8
+    assert titles.count("Creative brief") == 1 and titles.count("Creative brief (continued)") == 1
+    first, second = prs.slides[titles.index("Creative brief")], prs.slides[titles.index("Creative brief (continued)")]
+    assert titles.index("Creative brief (continued)") == titles.index("Creative brief") + 1
+    b1, b2 = _brief_boxes(first), _brief_boxes(second)
+    assert [b.text_frame.text[:2] for b in b1] == ["A "] * 4 and len(b1) == 4 and len(b2) == 4
+    # the first slide holds elements 0-3 (one row, left to right) and the second 4-7, at the same height
+    labels1 = [sh.text_frame.text for sh in first.shapes if sh.has_text_frame and sh.text_frame.text.startswith("Section")]
+    labels2 = [sh.text_frame.text for sh in second.shapes if sh.has_text_frame and sh.text_frame.text.startswith("Section")]
+    assert labels1 == [f"Section {i}" for i in range(4)] and labels2 == [f"Section {i}" for i in range(4, 8)]
+    assert len({b.top for b in b1}) == 1 and {b.top for b in b1} == {b.top for b in b2}
+    assert [b.left for b in b1] == sorted(b.left for b in b1)
     # a bullet per sentence, with real bullet formatting, and the label above (not inside) each box
-    assert len(boxes[0].text_frame.paragraphs) == 6
+    assert len(b1[0].text_frame.paragraphs) == 6
     assert all(p._p.pPr.find("{http://schemas.openxmlformats.org/drawingml/2006/main}buChar") is not None
-               for p in boxes[0].text_frame.paragraphs)
-    labels = [sh for sh in slide.shapes if sh.has_text_frame and sh.text_frame.text.startswith("Section")
-              and sh.shape_type != 1]
-    assert len(labels) == 8 and all(l.top < b.top for l, b in zip(labels, boxes))
+               for p in b1[0].text_frame.paragraphs)
+    lab = [sh for sh in first.shapes if sh.has_text_frame and sh.text_frame.text.startswith("Section")
+           and sh.shape_type != 1]
+    assert len(lab) == 4 and all(l.top < b.top for l, b in zip(lab, b1))
+
+
+def test_small_brief_stays_on_one_slide():
+    r = _result(False, True)
+    r["alignment"]["brief"] = "Aim:\nOne thing.\n\nBuyer:\nAnother thing.\n\nChannel:\nA third."
+    titles, prs = _titles(build_deck(r, _tags(5), "", ""))
+    assert titles.count("Creative brief") == 1 and "Creative brief (continued)" not in titles
+    assert len(_brief_boxes(prs.slides[titles.index("Creative brief")])) == 3
+
+
+def test_eleven_element_brief_is_two_slides_with_rows_split_evenly():
+    r = _result(False, True)
+    r["alignment"]["brief"] = "\n".join(f"Section {i}:\nA short sentence." for i in range(11))
+    titles, prs = _titles(build_deck(r, _tags(5), "", ""))
+    n1 = len(_brief_boxes(prs.slides[titles.index("Creative brief")]))
+    n2 = len(_brief_boxes(prs.slides[titles.index("Creative brief (continued)")]))
+    assert n1 + n2 == 11 and n2 > 0
 
 
 def test_parse_brief_sections_and_sentences():

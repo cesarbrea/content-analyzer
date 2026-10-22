@@ -439,23 +439,31 @@ def _bullets(tf, sentences, size, color=INK):
 
 
 def _brief_slide(D, brief: str):
+    """The brief as rounded boxes, one per element, label above, a bullet per sentence. Four or more elements are
+    split over two slides by rows: the top row on the first slide, the bottom row on the second."""
     sections = parse_brief(brief)
     n = len(sections)
-    rows = 1 if n <= 3 else 2 if n <= 8 else 3
-    cols = math.ceil(n / rows)
+    rows_total = 1 if n <= 3 else 2 if n <= 8 else 3
+    cols = math.ceil(n / rows_total)
+    pages = 2 if rows_total >= 2 else 1
+    rows_per_page = math.ceil(rows_total / pages)
     gap_x, gap_y, label_h = 0.25, 0.2, 0.34
     cell_w = (BODY_W - (cols - 1) * gap_x) / cols
-    cell_h = (BODY_BOTTOM - BODY_TOP - (rows - 1) * gap_y) / rows
+    cell_h = min(3.9, (BODY_BOTTOM - BODY_TOP - (rows_per_page - 1) * gap_y) / rows_per_page)
     box_h = cell_h - label_h
     inner_w = cell_w - 0.24 - 0.18   # box margins and the bullet indent
     inner_h = box_h - 0.2
-    # one font size for every box: the largest at which the fullest box fits
-    size = min(fit_size(sents, inner_w, inner_h, sizes=(16, 15, 14, 13, 12, 11, 10, 9, 8), gap_pt=4) or 8
+    # one font size on every slide: the largest at which the fullest box fits
+    size = min(fit_size(sents, inner_w, inner_h, sizes=(18, 16, 15, 14, 13, 12, 11, 10, 9, 8), gap_pt=4) or 8
                for _, sents in sections)
-    s = D.slide("Creative brief", "Creative brief")
+    per_page = rows_per_page * cols
+    s = None
     for i, (label, sents) in enumerate(sections):
-        x = MARGIN + (i % cols) * (cell_w + gap_x)
-        y = BODY_TOP + (i // cols) * (cell_h + gap_y)
+        if i % per_page == 0:
+            s = D.slide("Creative brief" + (" (continued)" if i else ""), "Creative brief")
+        j = i % per_page
+        x = MARGIN + (j % cols) * (cell_w + gap_x)
+        y = BODY_TOP + (j // cols) * (cell_h + gap_y)
         D.text(s, x, y, cell_w, label_h, [[(label, True)]], size=13, color=ACCENT, gap=0)
         box = s.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(y + label_h), Inches(cell_w), Inches(box_h))
         box.adjustments[0] = 0.06
@@ -470,7 +478,6 @@ def _brief_slide(D, brief: str):
         tf.margin_left = tf.margin_right = Inches(0.12)
         tf.margin_top = tf.margin_bottom = Inches(0.1)
         _bullets(tf, sents, size)
-    return s
 
 
 def _summary_slide(D, title, overall, blurb, names, scores):
